@@ -1,0 +1,136 @@
+.thermal-receipt-wrapper {
+  /* Scoped styling to not leak */
+  all: initial; /* Resets inherited styles */
+  display: block;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.thermal-receipt-container {
+  width: 80mm;
+  margin: 0 auto;
+  padding: 10px;
+  background: white;
+  color: black;
+  text-transform: uppercase;
+  font-size: 12px;
+  line-height: 1.2;
+  box-sizing: border-box;
+}
+
+.thermal-receipt-container * {
+  box-sizing: border-box;
+}
+
+.thermal-header {
+  text-align: center;
+  margin-bottom: 15px;
+}
+
+.thermal-title {
+  font-size: 16px;
+  font-weight: bold;
+  margin: 0 0 5px 0;
+}
+
+.thermal-subtitle {
+  font-size: 10px;
+  margin: 0;
+}
+
+.thermal-divider {
+  border-top: 1px dashed #000;
+  margin: 8px 0;
+  width: 100%;
+}
+
+.thermal-info-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.thermal-item-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-weight: bold;
+}
+
+.thermal-item-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.thermal-col-name {
+  flex: 2;
+  text-align: left;
+  padding-right: 5px;
+}
+
+.thermal-col-qty {
+  flex: 0.5;
+  text-align: center;
+}
+
+.thermal-col-rate {
+  flex: 1;
+  text-align: right;
+}
+
+.thermal-col-total {
+  flex: 1;
+  text-align: right;
+}
+
+.thermal-totals {
+  margin-top: 10px;
+}
+
+.thermal-total-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.thermal-grand-total {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.thermal-balance-box {
+  margin-top: 10px;
+  padding: 10px 5px;
+  border: 1px dashed #000;
+  text-align: center;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+/* Print Optimization */
+@media print {
+  /* Hide all UI elements in the body */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Make only the thermal receipt wrapper and its children visible */
+  .thermal-receipt-wrapper, .thermal-receipt-wrapper * {
+    visibility: visible;
+  }
+  
+  /* Position it at the top left of the print area */
+  .thermal-receipt-wrapper {
+    position: absolute;
+    left: 0;
+    top: 0;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+  }
+
+  /* Reset any page-level backgrounds */
+  @page {
+    margin: 0;
+  }
+}

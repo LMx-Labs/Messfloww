@@ -1,0 +1,153 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper Functions ───────────────────────────────────────────────────
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuth() && request.auth.uid == userId;
+    }
+
+    function getRoles() {
+      let path = /databases/$(database)/documents/app_config/roles;
+      return exists(path) ? get(path).data : null;
+    }
+
+    // Check if user is manager or staff based on email in app_config/roles
+    function isStaff() {
+      let email = request.auth.token.email.lower();
+      let roles = getRoles();
+      
+      return isAuth() && (
+        email == "lakshya.pms@gmail.com" ||
+        email == "samnagar@gmail.com" ||
+        (roles != null && (
+          (roles.authorized_admins != null && email in roles.authorized_admins) ||
+          email == roles.staff_email.lower() || 
+          email == roles.manager_email.lower()
+        ))
+      );
+    }
+
+    function isManager() {
+      let email = request.auth.token.email.lower();
+      let roles = getRoles();
+
+      return isAuth() && (
+        email == "lakshya.pms@gmail.com" ||
+        email == "samnagar@gmail.com" ||
+        (roles != null && (
+          (roles.authorized_admins != null && email in roles.authorized_admins) ||
+          email == roles.manager_email.lower()
+        ))
+      );
+    }
+
+    // ─── users/{uid} ────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow get: if isAuth() && (isOwner(userId) || isStaff());
+      allow list: if isStaff();
+      allow create: if isAuth() && isOwner(userId);
+      
+      // Students update weightBalance during order, Staff updates during top-up
+      allow update: if isAuth() && (
+        isOwner(userId) || isStaff()
+      );
+      allow delete: if isManager();
+    }
+
+    // ─── orders/{orderId} ───────────────────────────────────────────────────
+    match /orders/{orderId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+
+      // Students can't update orders once placed (except maybe cancel if implemented)
+      // Staff can update status, pickup status, etc.
+      allow update: if isStaff() || (isOwner(resource.data.userId) && request.resource.data.status == 'cancelled');
+      allow delete: if isManager();
+    }
+
+    // ─── menu/{itemId} ──────────────────────────────────────────────────────
+    match /menu/{itemId} {
+      allow read: if true; // Publicly viewable menu
+      allow update: if isStaff() || (isAuth() && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'available'])
+      );
+      allow create, delete: if isStaff();
+    }
+
+    // ─── students/{regNo} ───────────────────────────────────────────────────
+    match /students/{regNo} {
+      allow get, list: if isAuth(); 
+      allow update: if isAuth() && (
+        isStaff() || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'balance', 'credits']) &&
+          resource.data.email.lower() == request.auth.token.email.lower()
+        )
+      );
+      allow create, delete: if isStaff();
+    }
+
+    // ─── timeSlots/{id} ─────────────────────────────────────────────────────
+    match /timeSlots/{id} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    // ─── messStatus/{id} ────────────────────────────────────────────────────
+    match /messStatus/{id} {
+      allow read: if true;
+      allow update: if isAuth(); // Allow staff/students to update serving counts if needed, but staff should control isOpen
+      allow write: if isStaff();
+    }
+
+    // ─── app_config/{id} ────────────────────────────────────────────────────
+    match /app_config/{id} {
+      allow read: if isAuth();
+      allow write: if isManager();
+    }
+
+    // ─── ledger/{id} ────────────────────────────────────────────────────────
+    match /ledger/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
+
+    // ─── settings/{id} ──────────────────────────────────────────────────────
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    // ─── orderCounters/{date} ───────────────────────────────────────────────
+    match /orderCounters/{date} {
+      allow read: if isAuth();
+      allow write: if isAuth();
+    }
+
+    // ─── allowedEmails/{email} ──────────────────────────────────────────────
+    match /mess/{messName}/blocks/{blockName}/allowedEmails/{email} {
+      allow get: if messName == "grace caterers" && blockName == "t block";
+      allow update: if isAuth() 
+                    && request.auth.token.email == email
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimed']);
+      allow list, create, delete: if isStaff();
+    }
+
+    // ─── registered_students/{email} ────────────────────────────────────────
+    match /registered_students/{email} {
+      allow get: if isAuth() && (request.auth.token.email.lower() == email || isStaff());
+      allow list: if isStaff();
+      allow write: if isStaff();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

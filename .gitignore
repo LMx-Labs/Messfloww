@@ -1,0 +1,38 @@
+# Ignore dependencies
+node_modules/
+**/node_modules/
+
+# Ignore builds
+dist/
+dist-ssr/
+build/
+.next/
+out/
+
+# Ignore environment variables
+.env
+.env.*
+!.env.example
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+serviceAccountKey.json
+*.cjs
+# Keep seed scripts if desired, but often we ignore data migration scripts
+# seedMockData.cjs

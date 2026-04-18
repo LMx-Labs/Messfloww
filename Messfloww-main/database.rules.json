@@ -1,0 +1,35 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "active_orders": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".indexOn": ["userId"]
+    },
+    "menu_stock": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$itemId": {
+        "stock": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        }
+      }
+    },
+    "mess_status": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "kot_counters": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "kot_queue": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$counterId": {
+        ".indexOn": ["status"]
+      }
+    }
+  }
+}

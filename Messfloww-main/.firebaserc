@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "messfloww"
+  },
+  "targets": {
+    "messfloww": {
+      "hosting": {
+        "admin": [
+          "messfloww-admin"
+        ]
+      }
+    }
+  }
+}

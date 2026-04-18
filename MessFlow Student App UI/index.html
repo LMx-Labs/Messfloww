@@ -1,0 +1,47 @@
+
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>Messfloww — Order in 10 Seconds</title>
+      <meta name="description" content="Messfloww is the fastest way to order food at your college mess. Skip the queue, track your order live." />
+      <meta name="theme-color" content="#121212" />
+
+      <!-- PWA Support -->
+      <link rel="manifest" href="/manifest.json" />
+      <meta name="mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+      <meta name="apple-mobile-web-app-title" content="Messfloww" />
+
+      <!-- Security Headers (client-side CSP) -->
+      <!-- Allows Firebase, Google APIs, and your own app origin only -->
+      <meta http-equiv="Content-Security-Policy"
+        content="
+          default-src 'self';
+          script-src 'self' 'unsafe-inline' https://apis.google.com https://www.gstatic.com https://*.firebasedatabase.app;
+          connect-src 'self'
+            https://*.googleapis.com
+            https://*.firebaseapp.com
+            https://*.firebaseio.com
+            https://*.firebasedatabase.app
+            wss://*.firebaseio.com
+            wss://*.firebasedatabase.app
+            https://identitytoolkit.googleapis.com
+            https://securetoken.googleapis.com;
+          style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+          font-src 'self' https://fonts.gstatic.com;
+          img-src 'self' data: https:;
+          frame-src 'self' https://*.firebaseapp.com;
+        "
+      />
+      <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+      <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
+    </head>
+
+    <body>
+      <div id="root"></div>
+      <script type="module" src="/src/main.tsx"></script>
+    </body>
+  </html>
