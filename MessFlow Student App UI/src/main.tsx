@@ -1,7 +1,7 @@
   import { createRoot } from "react-dom/client";
-  import App from "./app/App.tsx";
+  import App from "./core/App";
   import "./styles/index.css";
-  import { AuthProvider } from "./app/contexts/AuthContext.tsx";
+  import { AuthProvider } from "./core/auth/AuthContext";
   import { Toaster } from "sonner";
 
   createRoot(document.getElementById("root")!).render(
