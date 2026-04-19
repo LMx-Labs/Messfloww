@@ -1,0 +1,23 @@
+{
+  "projects": {
+    "default": "messfloww"
+  },
+  "targets": {
+    "messfloww": {
+      "hosting": {
+        "student": [
+          "messfloww-students"
+        ],
+        "admin": [
+          "messfloww-admin"
+        ],
+        "kiosk": [
+          "messfloww-kiosk"
+        ],
+        "kitchen": [
+          "messfloww-kitchen"
+        ]
+      }
+    }
+  }
+}

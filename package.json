@@ -1,0 +1,24 @@
+{
+  "name": "messfloww",
+  "private": true,
+  "scripts": {
+    "dev:student": "pnpm --filter student-portal dev",
+    "dev:admin": "pnpm --filter admin-hq dev",
+    "dev:kiosk": "pnpm --filter kiosk-counter dev",
+    "dev:kitchen": "pnpm --filter inventory-kitchen dev",
+    "build:all": "pnpm -r build",
+    "deploy:all": "pnpm build:all && firebase deploy --only hosting",
+    "deploy:student": "pnpm --filter student-portal build && firebase deploy --only hosting:student",
+    "deploy:admin": "pnpm --filter admin-hq build && firebase deploy --only hosting:admin",
+    "deploy:kiosk": "pnpm --filter kiosk-counter build && firebase deploy --only hosting:kiosk",
+    "deploy:kitchen": "pnpm --filter inventory-kitchen build && firebase deploy --only hosting:kitchen",
+    "clean": "pnpm -r exec rm -rf node_modules dist"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  },
+  "dependencies": {
+    "firebase": "^12.12.0"
+  }
+}
