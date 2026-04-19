@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { tryConsume, ORDER_RATE, secondsUntilNextToken } from "../../shared/utils/rateLimiter";
 import { ref, onValue } from "firebase/database";
 import { rtdb } from "../../core/firebase/config";
+import { offlineStorage } from "../../shared/lib/offline/storage";
 
 export function CartScreen() {
   const navigate = useNavigate();
@@ -21,6 +22,11 @@ export function CartScreen() {
   const [cart, setCart] = useState(initialCart);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAdminOnline, setIsAdminOnline] = useState(true);
+
+  // Synchronize cart with offline storage so changes (like deletions) persist
+  useEffect(() => {
+    offlineStorage.saveCart(cart);
+  }, [cart]);
 
   // Kill-Switch: Listen to Admin Presence
   useEffect(() => {
