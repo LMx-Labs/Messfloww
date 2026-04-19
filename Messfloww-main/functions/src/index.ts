@@ -193,7 +193,7 @@ export const checkMessSlotTimer = functions.pubsub.schedule('every 1 minutes').o
           updatedAt: now.toISOString(),
           autoToggled: true
         });
-        await rtdb.ref('messStatus').set({ isOpen: true, currentlyServing: 0 });
+        await rtdb.ref('mess_status').set({ isOpen: true, currentlyServing: 0 });
       } else {
         // Deactivate
         await slotRef.set({
@@ -202,11 +202,11 @@ export const checkMessSlotTimer = functions.pubsub.schedule('every 1 minutes').o
           updatedAt: now.toISOString(),
           autoToggled: true
         });
-        await rtdb.ref('messStatus').set({ isOpen: false });
+        await rtdb.ref('mess_status').set({ isOpen: false });
       }
     } else {
       // Periodic Sync just in case
-      await rtdb.ref('messStatus/isOpen').set(currentSlotData.active);
+      await rtdb.ref('mess_status/isOpen').set(currentSlotData.active);
     }
 
     return null;
@@ -252,7 +252,7 @@ export const securePlaceOrder = https.onCall(async (request) => {
   const orderId = rtdb.ref('active_orders').push().key as string;
   // Get order counter for today
   const today = new Date().toISOString().split('T')[0];
-  const dailyCounterRef = db.doc(`daily_counters/${today}`);
+  const dailyCounterRef = db.doc(`orderCounters/${today}`);
 
   try {
     const result = await db.runTransaction(async (transaction) => {
@@ -372,7 +372,7 @@ export const securePlaceOrder = https.onCall(async (request) => {
 
     // 5. Create Order in RTDB
     const nowTimestamp = Date.now();
-    const messStatusSnap = await rtdb.ref('messStatus').once('value');
+    const messStatusSnap = await rtdb.ref('mess_status').once('value');
     const currentlyServing = messStatusSnap.exists() ? messStatusSnap.val().currentlyServing || 0 : 0;
     const queuePosition = Math.max(0, result.orderNumber - currentlyServing);
     const waitTimeSeconds = queuePosition * 3; // 3 seconds per order
