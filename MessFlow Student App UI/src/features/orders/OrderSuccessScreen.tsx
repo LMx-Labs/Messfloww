@@ -5,6 +5,7 @@ import { CheckCircle2, Clock, MapPin, ChevronRight } from "lucide-react";
 import QRCode from "react-qr-code";
 import { generateQRCodeValue } from "../../shared/utils/qrGenerator";
 import { useAuth } from "../../core/auth/AuthContext";
+// @ts-expect-error Types are not properly resolving for canvas-confetti
 import confetti from "canvas-confetti";
 
 export function OrderSuccessScreen() {
@@ -14,14 +15,10 @@ export function OrderSuccessScreen() {
   
   const { userProfile } = useAuth();
   
-  const [currentTime, setCurrentTime] = useState(Date.now());
-  
-  useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const qrCodeValue = generateQRCodeValue(orderId, currentTime);
+  // The QR is static for the session, capturing the moment of order placement.
+  // It is validated strictly by the one-time `qrUsed` flag in the DB.
+  const [fixedTime] = useState(Date.now());
+  const qrCodeValue = generateQRCodeValue(orderId, fixedTime);
 
   useEffect(() => {
     // Fire confetti!
@@ -110,7 +107,7 @@ export function OrderSuccessScreen() {
             className="bg-[#1E2A38] p-4 rounded-3xl border border-white/5 flex flex-col items-center"
           >
             <div className="bg-white p-2 rounded-xl mb-3">
-              <QRCode value={qrCodeValue} size={80} level="M" />
+              <QRCode value={qrCodeValue} size={140} level="H" />
             </div>
             <span className="text-white text-[10px] font-bold uppercase tracking-wider">Your Code</span>
           </motion.div>

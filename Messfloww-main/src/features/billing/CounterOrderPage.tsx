@@ -154,21 +154,22 @@ export function CounterOrderPage() {
       userRollNo: student.regNo,
       items: cart.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity })),
       totalPrice: total,
-      status: "preparing",
+      status: "pending",
+      payment_mode: "credit",
       slotName: activeSlotKey,
       slotTime: "N/A",
       orderNumber: Date.now() % 1000,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isCounterOrder: true
-    };
+    } as any;
 
     try {
       const { newBalance } = await deductStudentBalance(student.regNo, total);
-      await kitchenService.pushActiveOrder(newOrder);
       for (const item of cart) {
-        decreaseStock(activeSlotKey, item.id, item.quantity);
+        await kitchenService.decrementStock(item.id, item.quantity);
       }
+      await kitchenService.pushActiveOrder(newOrder);
       const studentForReceipt = { ...student, balance: newBalance };
       printReceipt(mapOrderToBill(newOrder as any, studentForReceipt), settings);
       setStudent({ ...student, balance: newBalance, credits: newBalance });

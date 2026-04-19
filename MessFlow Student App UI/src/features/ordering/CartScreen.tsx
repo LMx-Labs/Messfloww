@@ -2,12 +2,14 @@ import { useNavigate, useLocation } from "react-router";
 import { motion } from "motion/react";
 import { ArrowLeft, Wallet, Trash2, Plus, Minus, Loader2, ShoppingCart, ShieldAlert } from "lucide-react";
 import { EmptyState } from "../../shared/components/EmptyState";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "../../core/auth/AuthContext";
 import { orderService } from "../../features/orders/orderService";
 import { getCurrentSlot } from "../../shared/utils/mealSlots";
 import { toast } from "sonner";
 import { tryConsume, ORDER_RATE, secondsUntilNextToken } from "../../shared/utils/rateLimiter";
+import { ref, onValue } from "firebase/database";
+import { rtdb } from "../../core/firebase/config";
 
 export function CartScreen() {
   const navigate = useNavigate();
@@ -18,6 +20,16 @@ export function CartScreen() {
   
   const [cart, setCart] = useState(initialCart);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAdminOnline, setIsAdminOnline] = useState(true);
+
+  // Kill-Switch: Listen to Admin Presence
+  useEffect(() => {
+    const adminOnlineRef = ref(rtdb, "system_status/admin_online");
+    const unsubscribe = onValue(adminOnlineRef, (snap) => {
+      setIsAdminOnline(snap.val() === true);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Guard - Block unregistered or disabled users from seeing the cart content
   if (userProfile && (!userProfile.isRegistered || userProfile.status === 'disabled')) {
@@ -257,18 +269,29 @@ export function CartScreen() {
           </div>
 
           {/* Confirm Button */}
+          {!isAdminOnline && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 flex items-start gap-2 mb-2">
+               <ShieldAlert className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+               <p className="text-red-200 text-xs leading-relaxed">
+                 The Counter Admin is currently offline. Orders are blocked temporarily to prevent verification gaps. Please wait.
+               </p>
+            </div>
+          )}
+
           <motion.button
-            whileTap={!isSubmitting && balanceAfterOrder >= 0 ? { scale: 0.98 } : {}}
+            whileTap={!isSubmitting && balanceAfterOrder >= 0 && isAdminOnline ? { scale: 0.98 } : {}}
             onClick={handleConfirmOrder}
-            disabled={balanceAfterOrder < 0 || isSubmitting}
+            disabled={balanceAfterOrder < 0 || isSubmitting || !isAdminOnline}
             className={`w-full py-4 rounded-xl transition-all duration-200 flex justify-center items-center gap-2 ${
-              balanceAfterOrder < 0 || isSubmitting
+              balanceAfterOrder < 0 || isSubmitting || !isAdminOnline
                 ? "bg-gray-700 text-gray-400 cursor-not-allowed"
                 : "bg-gradient-to-r from-[#FFD54F] to-[#FFE082] text-[#121212] shadow-lg shadow-[#FFD54F]/30"
             }`}
           >
             {isSubmitting ? (
               <><Loader2 className="w-5 h-5 animate-spin" /> Processing...</>
+            ) : !isAdminOnline ? (
+              "Admin Offline (Wait)"
             ) : balanceAfterOrder < 0 ? (
               "Insufficient Credits"
             ) : (

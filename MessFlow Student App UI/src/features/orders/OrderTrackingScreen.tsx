@@ -14,12 +14,8 @@ export function OrderTrackingScreen() {
   
   const [order, setOrder] = useState<OrderDoc | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentTime, setCurrentTime] = useState(Date.now());
-
-  useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
+  // We no longer use a live changing timestamp interval.
+  // The QR code is a static single-use representation of this exact order.
 
   // Fetch Order once on mount (No more live status subscription per user request)
   useEffect(() => {
@@ -62,7 +58,8 @@ export function OrderTrackingScreen() {
     );
   }
 
-  const qrCodeValue = generateQRCodeValue(order.id, currentTime);
+  // Generate a static, one-time use QR code representing the order
+  const qrCodeValue = generateQRCodeValue(order.id, new Date(order.createdAt).getTime());
 
   return (
     <div className="min-h-screen bg-[#121212] flex flex-col">
@@ -127,7 +124,7 @@ export function OrderTrackingScreen() {
           className="bg-[#1E2A38] rounded-3xl p-8 border border-white/5 flex flex-col items-center"
         >
           <div className={`bg-white p-5 rounded-2xl mb-6 shadow-xl ${order.qrUsed ? 'opacity-30 grayscale' : 'opacity-100'}`}>
-            <QRCode value={qrCodeValue} size={200} level="M" />
+            <QRCode value={qrCodeValue} size={200} level="H" />
           </div>
           
           <div className="text-center">

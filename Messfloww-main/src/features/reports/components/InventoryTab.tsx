@@ -102,7 +102,7 @@ export function InventoryTab({ date }: InventoryTabProps) {
             </ResponsiveContainer>
           ) : (
             <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">
-               Engine Stub: Missing initial stock data tracking
+               No stock consumption data for selected date
             </div>
           )}
         </div>

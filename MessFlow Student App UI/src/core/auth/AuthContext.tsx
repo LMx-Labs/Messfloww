@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
 import { onAuthStateChanged, User, signOut as firebaseSignOut } from "firebase/auth";
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, onSnapshot } from "firebase/firestore";
-import { auth, db } from "../../core/firebase/config";
+import { ref, onValue, set, onDisconnect } from "firebase/database";
+import { auth, db, rtdb } from "../../core/firebase/config";
 import { toast } from "sonner";
 import { offlineStorage } from "../../shared/lib/offline/storage";
 
@@ -16,7 +17,20 @@ export interface UserProfile {
   isRegistered: boolean;
   status: "active" | "disabled" | "pending";
   photoURL?: string;
+  activeSessionId?: string;
 }
+
+// Generate or retrieve a unique ID for this browser instance
+// This persists across tab reloads but is shared across all tabs of this browser
+const APP_SESSION_ID = (() => {
+  const key = "messflow_session_id";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    localStorage.setItem(key, id);
+  }
+  return id;
+})();
 
 interface AuthContextType {
   user: User | null;
@@ -68,10 +82,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const studentData = studentDocSnap.data();
 
-    // RE-LINK UID if missing
+    // RE-LINK UID if missing, or UPDATE active session
+    const updates: any = {};
     if (!studentData.uid || studentData.uid !== currentUser.uid) {
-      await updateDoc(studentDocRef, { uid: currentUser.uid });
+      updates.uid = currentUser.uid;
     }
+    // We remove the Firestore activeSessionId tracking from here, using RTDB instead.
+
+    if (Object.keys(updates).length > 0) {
+      await updateDoc(studentDocRef, updates);
+    }
+
+    // Set Session ID to RTDB for immediate presence / lockout listening
+    const sessionRef = ref(rtdb, `users/${currentUser.uid}/current_session_id`);
+    await set(sessionRef, APP_SESSION_ID);
 
     const userDocRef = doc(db, "users", currentUser.uid);
     const existingSnap = await getDoc(userDocRef);
@@ -101,13 +125,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     statusListenerRef.current = onSnapshot(studentDocRef, (snap) => {
       if (snap.exists()) {
         const latestData = snap.data();
+        
+        // CHECK 1: If account is disabled, force logout immediately
+        if (latestData.status === "disabled") {
+          toast.error("Account Access Revoked: Your account has been disabled. Please contact administration.");
+          firebaseSignOut(auth);
+          return;
+        }
+
+        // We moved the session ID check to the distinct RTDB listener below.
+
         setUserProfile(prev => {
           if (!prev) return null;
           const updatedProfile = {
             ...prev,
             status: latestData.status || "active",
             walletBalance: latestData.balance !== undefined ? latestData.balance : prev.walletBalance,
-            name: latestData.name || prev.name
+            name: latestData.name || prev.name,
+            activeSessionId: latestData.activeSessionId
           };
           offlineStorage.saveProfile(updatedProfile);
           return updatedProfile;
@@ -132,6 +167,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       if (currentUser) {
         try {
+          // Track RTDB Single-Session Enforcement
+          const sessionRef = ref(rtdb, `users/${currentUser.uid}/current_session_id`);
+          onValue(sessionRef, (snapshot) => {
+            const currentRtdbSession = snapshot.val();
+            if (currentRtdbSession && currentRtdbSession !== APP_SESSION_ID) {
+              // Forced single-device collision!
+              toast.error("Security Alert: Logged in from another device.");
+              firebaseSignOut(auth);
+            }
+          });
+
           const email = currentUser.email?.toLowerCase().trim();
           if (!email) {
             await firebaseSignOut(auth);

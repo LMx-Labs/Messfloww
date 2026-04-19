@@ -1,25 +1,67 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { ScanBarcode, Check, Printer, AlertCircle, Clock } from "lucide-react";
 import { useTimeSlots } from "../../features/timeslots/TimeSlotContext";
+import { useMenu } from "../../features/menu/MenuContext";
 import { Link } from "react-router";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../../core/firebase";
 import { fetchSettings } from "../settings/settingsService";
 import { kitchenService } from "../kitchen/kitchenService";
 import { parseQRCodeValue } from "../../app/utils/qrParser";
-import { printReceipt, mapOrderToBill } from "../../app/modules/ThermalPrinter";
+import { printReceipt, mapOrderToBill, mapOrderToKOTs } from "../../app/modules/ThermalPrinter";
 import { toast } from "sonner";
 
 export function BarcodeScanPage() {
   const { activeSlot } = useTimeSlots();
+  const { menu } = useMenu();
   const [scannedOrder, setScannedOrder] = useState<any>(null);
   const [scanning, setScanning] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState("");
   const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scanningRef = useRef(false);
   const [settings, setSettings] = useState<any>(null);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   useEffect(() => {
     fetchSettings().then(setSettings);
+
+    const checkQueueAndSync = async () => {
+      const queue = JSON.parse(localStorage.getItem('offlineScanQueue') || '[]');
+      if (queue.length > 0) {
+        toast.info(`Syncing ${queue.length} offline scans...`);
+        let syncedCount = 0;
+        const newQueue = [];
+        
+        for (const scanStr of queue) {
+          try {
+            await kitchenService.atomicCollectOrder(scanStr);
+            syncedCount++;
+          } catch (e) {
+             // Maybe already processed or permanently failed, could keep or drop. Let's drop to prevent infinite loop.
+          }
+        }
+        localStorage.setItem('offlineScanQueue', JSON.stringify(newQueue));
+        if (syncedCount > 0) toast.success(`Synced ${syncedCount} offline scans!`);
+      }
+    };
+
+    const handleOnline = () => {
+      setIsOffline(false);
+      checkQueueAndSync();
+    };
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Initial check
+    if (navigator.onLine) checkQueueAndSync();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   if (!activeSlot) {
@@ -41,70 +83,128 @@ export function BarcodeScanPage() {
     );
   }
 
-  const handleScan = async (barcode?: string) => {
-    const rawInput = barcode || barcodeInput;
-    if (!rawInput) return;
+  const handleScan = useCallback(async (rawInput: string) => {
+    const trimmed = rawInput.trim();
+    if (!trimmed || scanningRef.current) return;
     
+    scanningRef.current = true;
     setScanning(true);
     setError("");
     
     try {
-      const parsedQR = parseQRCodeValue(rawInput);
-      const orderId = parsedQR ? parsedQR.orderId : rawInput;
+      const parsedQR = parseQRCodeValue(trimmed);
+      let orderId = parsedQR ? parsedQR.orderId : trimmed;
 
-      const activeOrder = await kitchenService.getActiveOrderById(orderId);
+      let activeOrder = null;
+      
+      if (isOffline) {
+        const cache = JSON.parse(localStorage.getItem('offline_orders_cache') || '[]');
+        activeOrder = cache.find((o: any) => o.id === orderId || o.orderNumber?.toString() === orderId || o.userRollNo === orderId);
+        if (activeOrder) orderId = activeOrder.id;
+      } else {
+        activeOrder = await kitchenService.getActiveOrderById(orderId);
+        
+        if (!activeOrder && !parsedQR) {
+          activeOrder = await kitchenService.getActiveOrderSearchFallback(trimmed);
+          if (activeOrder) {
+            orderId = activeOrder.id;
+          }
+        }
+      }
       
       if (activeOrder) {
-        if (parsedQR && parsedQR.ts) {
-          const timeDiff = Date.now() - parsedQR.ts;
-          if (timeDiff > 60000 || timeDiff < -10000) {
-            setError("QR Code expired! Please show the live and scanning QR code from the app.");
-            setScanning(false);
-            return;
-          }
-        } else if (rawInput.startsWith('MESSFLOWW|')) {
-           setError("Invalid QR format. Please use the live QR code.");
-           setScanning(false);
+        if (!parsedQR && trimmed.startsWith('MESSFLOWW|')) {
+           setError("Invalid QR format. Please try scanning again.");
            return;
         }
 
-        if (activeOrder.qrUsed) {
+        if (activeOrder.qrUsed || activeOrder.status === 'collected') {
           setError("Order already collected (QR Used)");
-          setScanning(false);
           return;
         }
 
-        activeOrder.qrUsed = true;
-        await kitchenService.updateActiveOrderStatus(orderId, 'qrUsed', true as any); 
-        await kitchenService.updateActiveOrderStatus(orderId, 'status', 'completed');
+        let collectedOrder;
         
-        setScannedOrder({ id: activeOrder.id, ...activeOrder });
-        setBarcodeInput("");
+        if (isOffline) {
+          collectedOrder = { ...activeOrder, status: 'collected', qrUsed: true };
+          // Mark locally in cache so we don't scan it twice offline
+          const cache = JSON.parse(localStorage.getItem('offline_orders_cache') || '[]');
+          const idx = cache.findIndex((o: any) => o.id === orderId);
+          if (idx >= 0) {
+            cache[idx] = collectedOrder;
+            localStorage.setItem('offline_orders_cache', JSON.stringify(cache));
+          }
+
+          const queue = JSON.parse(localStorage.getItem('offlineScanQueue') || '[]');
+          if (!queue.includes(orderId)) {
+             queue.push(orderId);
+             localStorage.setItem('offlineScanQueue', JSON.stringify(queue));
+          }
+          toast.success("Offline Scan Saved! Printing locally...");
+        } else {
+          collectedOrder = await kitchenService.atomicCollectOrder(orderId);
+        }
+
+        setScannedOrder({ id: collectedOrder.id, ...collectedOrder });
         
         setTimeout(() => {
-          printReceipt(mapOrderToBill(activeOrder), settings);
+          const allMenuItems = Object.values(menu).flat();
+          const bill = mapOrderToBill(collectedOrder);
+          const kots = mapOrderToKOTs(collectedOrder, allMenuItems);
+          printReceipt([bill, ...kots], settings);
         }, 500);
 
       } else {
-        const histRef = doc(db, "historical_orders", orderId);
-        const histDoc = await getDoc(histRef);
-        if (histDoc.exists()) {
-          setError("Order already collected or cancelled");
-        } else {
-          setError("Invalid QR Code or Order not found");
+        if (!isOffline) {
+          const histRef = doc(db, "historical_orders", orderId);
+          const histDoc = await getDoc(histRef);
+          if (histDoc.exists()) {
+            setError("Order already collected or cancelled");
+            return;
+          }
         }
+        setError("Invalid QR Code or Order not found");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Scan failed", e);
-      setError("Error finding order");
+      if (isOffline || e.message?.includes('network')) {
+         const queue = JSON.parse(localStorage.getItem('offlineScanQueue') || '[]');
+         const parsedId = parseQRCodeValue(trimmed)?.orderId || trimmed;
+         queue.push(parsedId);
+         localStorage.setItem('offlineScanQueue', JSON.stringify(queue));
+         toast.success("Saved scan offline! Will sync when reconnected.");
+         setError(""); // Don't show error if we handled it via offline queue
+      } else {
+         setError(e.message || "Error finding order");
+      }
     } finally {
+      scanningRef.current = false;
       setScanning(false);
+      // Clear the input and refocus for the next scan
+      setBarcodeInput("");
+      if (inputRef.current) {
+        inputRef.current.value = "";
+        inputRef.current.focus();
+      }
+    }
+  }, [settings]);
+
+  // Physical barcode scanners type characters rapidly then fire Enter.
+  // Reading from the DOM ref avoids React state batching lag.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const value = inputRef.current?.value || barcodeInput;
+      if (value.trim()) handleScan(value);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && barcodeInput.trim()) handleScan(barcodeInput);
-  };
+  // Auto-focus the input on mount and when returning to scan mode
+  useEffect(() => {
+    if (!scannedOrder && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [scannedOrder]);
 
   const handlePrintReceipt = () => {
     if (scannedOrder) printReceipt(mapOrderToBill(scannedOrder), settings);
@@ -119,7 +219,14 @@ export function BarcodeScanPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-foreground mb-2">Barcode Scanner</h1>
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-3xl font-bold text-foreground">Barcode Scanner</h1>
+          {isOffline && (
+            <span className="bg-destructive/10 text-destructive text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider animate-pulse flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5" /> Offline Mode
+            </span>
+          )}
+        </div>
         <p className="text-muted-foreground">Scan customer barcode to complete order pickup</p>
       </div>
 
@@ -133,7 +240,7 @@ export function BarcodeScanPage() {
           <h2 className="text-2xl font-bold text-foreground mb-3">{scanning ? "Scanning..." : "Enter Barcode Number"}</h2>
           <p className="text-muted-foreground mb-8">Type the barcode and press Enter to search</p>
           {error && <div className="mb-6 bg-destructive/10 text-destructive text-sm font-semibold p-3 rounded-lg border border-destructive/20 animate-in fade-in slide-in-from-top-2">{error}</div>}
-          <input type="text" value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyPress={handleKeyPress} placeholder="Enter barcode number" disabled={scanning} autoFocus className="w-full max-w-md mx-auto bg-input-background text-foreground px-6 py-4 rounded-xl border-2 border-border focus:outline-none focus:ring-2 focus:ring-primary text-center text-lg font-semibold" />
+          <input ref={inputRef} type="text" defaultValue="" onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Scan QR code or type barcode" disabled={scanning} autoFocus className="w-full max-w-md mx-auto bg-input-background text-foreground px-6 py-4 rounded-xl border-2 border-border focus:outline-none focus:ring-2 focus:ring-primary text-center text-lg font-semibold" />
         </div>
       ) : (
         <div className="space-y-6">

@@ -103,7 +103,7 @@ export function FoodTab({ startDate, endDate }: FoodTabProps) {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5} className="text-center py-6 text-muted-foreground">Engine Stub: Missing preparation logs</td>
+                  <td colSpan={5} className="text-center py-6 text-muted-foreground">No food utilization data available</td>
                 </tr>
               )}
             </tbody>
@@ -140,7 +140,7 @@ export function FoodTab({ startDate, endDate }: FoodTabProps) {
                  ))}
                </ul>
              ) : (
-               <div className="h-32 flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">Engine Stub</div>
+               <div className="h-32 flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">No moving items data</div>
              )}
           </div>
         </div>
@@ -171,7 +171,7 @@ export function FoodTab({ startDate, endDate }: FoodTabProps) {
                  ))}
                </ul>
              ) : (
-               <div className="h-32 flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">Engine Stub</div>
+               <div className="h-32 flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">No moving items data</div>
              )}
           </div>
         </div>

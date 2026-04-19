@@ -78,7 +78,7 @@ export function OperationsTab({ date }: OperationsTabProps) {
               </LineChart>
             </ResponsiveContainer>
           ) : (
-             <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">Engine Stub</div>
+             <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">No order data for this date</div>
           )}
         </div>
       </div>
@@ -110,7 +110,7 @@ export function OperationsTab({ date }: OperationsTabProps) {
                </BarChart>
              </ResponsiveContainer>
           ) : (
-            <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">Engine Stub</div>
+            <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">No slot data available</div>
           )}
         </div>
       </div>

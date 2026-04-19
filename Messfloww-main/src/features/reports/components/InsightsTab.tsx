@@ -91,7 +91,7 @@ export function InsightsTab() {
              ))
           ) : (
             <div className="col-span-2 py-12 text-center border-2 border-dashed border-border rounded-xl text-muted-foreground">
-               Engine Stub
+               Insights will appear once orders are recorded
             </div>
           )}
         </div>
@@ -105,8 +105,17 @@ export function InsightsTab() {
             <TrendingDown className="h-5 w-5 text-destructive" />
             Underperforming Items
           </h3>
-          <div className="flex-1 flex items-center justify-center border border-dashed border-border rounded-lg bg-muted/20 text-muted-foreground text-sm py-8">
-            Engine Stub
+          <div className="flex-1 space-y-2">
+            {insightsData?.data.underperforming && insightsData.data.underperforming.length > 0 ? (
+                insightsData.data.underperforming.map((i: any) => (
+                    <div key={i.name} className="flex justify-between items-center text-sm p-2 bg-muted/20 rounded-lg">
+                        <span>{i.name}</span>
+                        <span className="font-bold text-destructive">{i.value} sold</span>
+                    </div>
+                ))
+            ) : (
+                <div className="text-center py-8 text-muted-foreground text-xs">No slow items found</div>
+            )}
           </div>
         </div>
 
@@ -115,8 +124,17 @@ export function InsightsTab() {
             <Store className="h-5 w-5 text-orange-500" />
             High Waste Alerts
           </h3>
-          <div className="flex-1 flex items-center justify-center border border-dashed border-border rounded-lg bg-muted/20 text-muted-foreground text-sm py-8">
-            Engine Stub
+          <div className="flex-1 space-y-2">
+            {insightsData?.data.waste && insightsData.data.waste.length > 0 ? (
+                insightsData.data.waste.map((i: any) => (
+                    <div key={i.name} className="flex justify-between items-center text-sm p-2 bg-orange-500/5 rounded-lg border border-orange-500/10">
+                        <span>{i.name}</span>
+                        <span className="font-bold text-orange-600">{i.waste} units</span>
+                    </div>
+                ))
+            ) : (
+                <div className="text-center py-8 text-muted-foreground text-xs">No high waste detected</div>
+            )}
           </div>
         </div>
 
@@ -125,8 +143,16 @@ export function InsightsTab() {
             <TrendingUp className="h-5 w-5 text-primary" />
             Demand Prediction
           </h3>
-          <div className="flex-1 flex items-center justify-center border border-dashed border-border rounded-lg bg-muted/20 text-muted-foreground text-sm py-8">
-            Engine Stub
+          <div className="flex-1 space-y-2">
+            {insightsData?.data.demand && insightsData.data.demand.length > 0 ? (
+                insightsData.data.demand.map((d: any, i: number) => (
+                    <div key={i} className="text-xs p-3 bg-primary/5 rounded-lg border border-primary/10 italic">
+                        "{d}"
+                    </div>
+                ))
+            ) : (
+                <div className="text-center py-8 text-muted-foreground text-xs">Insufficient data for prediction</div>
+            )}
           </div>
         </div>
 

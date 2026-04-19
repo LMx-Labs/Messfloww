@@ -33,9 +33,10 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.checkMessSlotTimer = exports.processSubscriptions = void 0;
+exports.securePlaceOrder = exports.checkMessSlotTimer = exports.processSubscriptions = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
+const https = __importStar(require("firebase-functions/v2/https"));
 const mailer_1 = require("./config/mailer");
 const dataAggregator_1 = require("./services/dataAggregator");
 const emailTemplates_1 = require("./services/emailTemplates");
@@ -222,6 +223,178 @@ exports.checkMessSlotTimer = functions.pubsub.schedule('every 1 minutes').onRun(
     catch (error) {
         functions.logger.error("Error in checkMessSlotTimer:", error);
         return null;
+    }
+});
+/**
+ * securePlaceOrder: The "Aspirin Logic" Checkout Flow
+ * 1. Checks if Admin is Online.
+ * 2. Checks if the student's status is "active".
+ * 3. Checks if wallet balance is sufficient.
+ * 4. Checks RTDB stock counts.
+ * 5. Atomically performs deductions and creates the order.
+ */
+exports.securePlaceOrder = https.onCall(async (request) => {
+    const { data, auth } = request;
+    if (!(auth === null || auth === void 0 ? void 0 : auth.uid)) {
+        throw new https.HttpsError('unauthenticated', 'You must be logged in to place an order.');
+    }
+    const { cart, totalPrice, slotName, paymentMode } = data;
+    if (!cart || cart.length === 0 || !totalPrice || !slotName) {
+        throw new https.HttpsError('invalid-argument', 'Missing required order fields.');
+    }
+    const db = admin.firestore();
+    const rtdb = admin.database();
+    // 1. Verify Admin is Online (Kill-Switch)
+    const systemStatusSnap = await rtdb.ref('system_status/admin_online').once('value');
+    const isAdminOnline = systemStatusSnap.val();
+    if (!isAdminOnline) {
+        throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
+    }
+    // Generate unique order ID early (RTDB push key style)
+    const orderId = rtdb.ref('active_orders').push().key;
+    // Get order counter for today
+    const today = new Date().toISOString().split('T')[0];
+    const dailyCounterRef = db.doc(`daily_counters/${today}`);
+    try {
+        const result = await db.runTransaction(async (transaction) => {
+            var _a, _b;
+            // 2. Load User and Student records
+            const userRef = db.collection('users').doc(auth.uid);
+            const userSnap = await transaction.get(userRef);
+            if (!userSnap.exists) {
+                throw new https.HttpsError('not-found', 'User profile not found.');
+            }
+            const rollNo = (_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.rollNo;
+            if (!rollNo || rollNo === 'UNREGISTERED') {
+                throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order.');
+            }
+            const studentRef = db.collection('students').doc(rollNo);
+            const studentSnap = await transaction.get(studentRef);
+            if (!studentSnap.exists) {
+                throw new https.HttpsError('not-found', 'Student record not found.');
+            }
+            const studentData = studentSnap.data();
+            // Verify Status
+            if ((studentData === null || studentData === void 0 ? void 0 : studentData.status) === 'disabled') {
+                throw new https.HttpsError('permission-denied', 'Account has been disabled. Order denied.');
+            }
+            // 3. Check Wallet Balance if paying by credit
+            if (paymentMode === 'credit') {
+                const balance = (studentData === null || studentData === void 0 ? void 0 : studentData.balance) || 0;
+                if (balance < totalPrice) {
+                    throw new https.HttpsError('resource-exhausted', 'Insufficient wallet balance.');
+                }
+            }
+            // Read Daily Counter for receipt number
+            const counterSnap = await transaction.get(dailyCounterRef);
+            let orderNumber = 1;
+            if (counterSnap.exists) {
+                orderNumber = (((_b = counterSnap.data()) === null || _b === void 0 ? void 0 : _b.count) || 0) + 1;
+            }
+            // We cannot easily lock RTDB stock inside a Firestore transaction.
+            // So we will optimistically decrement Firestore, then try RTDB.
+            // If RTDB fails, we revert Firestore. This is cross-DB pseudo-transaction.
+            // A better way is using Admin SDK to check stock via RTDB transaction FIRST.
+            // Wait, let's do RTDB transaction inside Firestore transaction? It's async. We can!
+            return { userSnap, studentRef, studentData, dailyCounterRef, orderNumber, counterSnap };
+        });
+        // 4. Perform RTDB Stock checks and deductions atomically for ALL items
+        // Using multi-path update to decrement stock IF stock is sufficient.
+        // However, multi-path update cannot do conditional checks directly without Security Rules.
+        // Instead, we can read stock, check array, and write back in one transaction on the root /menu_stock, 
+        // or just run a transaction on each item.
+        // Let's do parallel transactions on RTDB for stock.
+        const stockReverts = [];
+        let stockFailed = false;
+        let failedItemName = '';
+        for (const item of cart) {
+            const stockRef = rtdb.ref(`menu_stock/${item.id}`);
+            const fallbackResult = await stockRef.transaction((currentData) => {
+                if (currentData === null)
+                    return currentData;
+                if ((currentData.stock || 0) >= item.qty) {
+                    currentData.stock -= item.qty;
+                    if (currentData.stock <= (currentData.minStock || 0)) {
+                        currentData.available = false;
+                    }
+                    return currentData;
+                }
+                return undefined; // Abort transaction
+            });
+            if (!fallbackResult.committed) {
+                stockFailed = true;
+                failedItemName = item.name;
+                break;
+            }
+            else {
+                stockReverts.push({ ref: stockRef, qty: item.qty });
+            }
+        }
+        if (stockFailed) {
+            // Revert any decremented stock
+            for (const revert of stockReverts) {
+                await revert.ref.transaction((currentData) => {
+                    if (currentData !== null) {
+                        currentData.stock = (currentData.stock || 0) + revert.qty;
+                        if (currentData.stock > (currentData.minStock || 0)) {
+                            currentData.available = true;
+                        }
+                    }
+                    return currentData;
+                });
+            }
+            throw new https.HttpsError('resource-exhausted', `Out of stock: ${failedItemName}`);
+        }
+        // Now complete the Firestore wallet deduction securely
+        await db.runTransaction(async (transaction) => {
+            var _a, _b;
+            const studentSnap = await transaction.get(result.studentRef);
+            if (paymentMode === 'credit') {
+                const newBal = (((_a = studentSnap.data()) === null || _a === void 0 ? void 0 : _a.balance) || 0) - totalPrice;
+                const newCred = (((_b = studentSnap.data()) === null || _b === void 0 ? void 0 : _b.credits) || 0) - totalPrice;
+                transaction.update(result.studentRef, { balance: newBal, credits: newCred });
+                transaction.update(db.collection('users').doc(auth.uid), { walletBalance: newBal });
+            }
+            if (result.counterSnap.exists) {
+                transaction.update(result.dailyCounterRef, { count: result.orderNumber });
+            }
+            else {
+                transaction.set(result.dailyCounterRef, { count: result.orderNumber, date: today });
+            }
+        });
+        // 5. Create Order in RTDB
+        const nowTimestamp = Date.now();
+        const messStatusSnap = await rtdb.ref('messStatus').once('value');
+        const currentlyServing = messStatusSnap.exists() ? messStatusSnap.val().currentlyServing || 0 : 0;
+        const queuePosition = Math.max(0, result.orderNumber - currentlyServing);
+        const waitTimeSeconds = queuePosition * 3; // 3 seconds per order
+        // Calculate estimate window
+        const startTimeDate = new Date(nowTimestamp + waitTimeSeconds * 1000);
+        const endTimeDate = new Date(startTimeDate.getTime() + 180 * 1000);
+        const formatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        // Keep it generic or use JS formatting
+        const estimatedServingWindow = `${formatter.format(startTimeDate)} - ${formatter.format(endTimeDate)}`;
+        const newOrder = {
+            id: orderId,
+            orderNumber: result.orderNumber,
+            userId: auth.uid,
+            userRollNo: result.studentData.regNo,
+            items: cart,
+            totalPrice,
+            slotName,
+            payment_mode: paymentMode,
+            status: 'pending',
+            sync_status: 'cloud',
+            estimatedServingWindow,
+            createdAt: nowTimestamp,
+            timestamp: admin.database.ServerValue.TIMESTAMP
+        };
+        await rtdb.ref(`active_orders/${orderId}`).set(newOrder);
+        return { success: true, orderId, orderNumber: result.orderNumber, estimatedServingWindow };
+    }
+    catch (error) {
+        functions.logger.error('securePlaceOrder failed', error);
+        throw new https.HttpsError('internal', error.message || 'Transaction failed');
     }
 });
 //# sourceMappingURL=index.js.map

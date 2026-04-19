@@ -1,7 +1,8 @@
 import { ref, onValue, set, get, runTransaction, push, query as rtdbQuery, orderByChild, equalTo } from "firebase/database";
-import { rtdb, db } from "../../core/firebase/config";
-import { doc, getDoc, writeBatch } from "firebase/firestore";
-import { OrderItem, MealSlot } from "./orderService";
+import { rtdb, db, app } from "../../core/firebase/config";
+import { doc, getDoc, writeBatch, runTransaction as firestoreRunTransaction } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import { OrderItem, MealSlot } from "../../types/order.types";
 
 export const rtdbService = {
   // ---- Mess Status ----
@@ -81,132 +82,30 @@ export const rtdbService = {
     totalPrice: number,
     slotInfo: MealSlot
   ): Promise<{ id: string, orderNumber: number, estimatedServingWindow: string }> {
-    
-    const stockRollbacks: { ref: any, qty: number }[] = [];
-    const newStocks: Record<number, number> = {};
-    
     try {
-      // 1. RTDB Stock Check & Decrement
-      for (const item of items) {
-        const itemRef = ref(rtdb, `menu_stock/${item.id}`);
-        const result = await runTransaction(itemRef, (data) => {
-          if (data === null) return data; // Node doesn't exist yet, can't order
-          
-          if (data.stock >= item.qty && (data.available || data.stock > 0)) {
-            data.stock -= item.qty;
-            if (data.stock <= (data.minStock || 0)) {
-              data.available = false;
-            }
-            return data;
-          } else {
-            return; // Abort transaction
-          }
-        });
-        
-        if (!result.committed) {
-          throw new Error(`${item.name} is out of stock`);
-        } else {
-          stockRollbacks.push({ ref: itemRef, qty: item.qty });
-          newStocks[item.id] = result.snapshot.val().stock;
-        }
-      }
-
-      // 2. Firestore Wallet Update & Counter
-      const batch = writeBatch(db);
-      const userRef = doc(db, "users", userId);
-      const studentRef = doc(db, "students", userRollNo);
+      const functions = getFunctions(app);
+      const securePlaceOrderFn = httpsCallable(functions, 'securePlaceOrder');
       
-      const userSnap = await getDoc(userRef);
-      if (!userSnap.exists()) throw new Error("User not found");
-      const currentBalance = userSnap.data().walletBalance || 0;
-      if (currentBalance < totalPrice) throw new Error("Insufficient funds");
-      
-      const studentSnap = await getDoc(studentRef);
-
-      // Counters & Estimation
-      const messStatusSnap = await get(ref(rtdb, "mess_status"));
-      const currentlyServing = messStatusSnap.exists() ? messStatusSnap.val().currentlyServing || 0 : 0;
-      
-      const today = new Date().toISOString().split('T')[0];
-      const counterRef = doc(db, "orderCounters", today);
-      const counterSnap = await getDoc(counterRef);
-      
-      let nextNumber = 1;
-      if (counterSnap.exists()) {
-        nextNumber = counterSnap.data().count + 1;
-        batch.update(counterRef, { count: nextNumber });
-      } else {
-        batch.set(counterRef, { count: 1 });
-      }
-
-      // Updates
-      batch.update(userRef, { 
-        walletBalance: currentBalance - totalPrice, 
-        updatedAt: new Date().toISOString() 
-      });
-      if (studentSnap.exists()) {
-        batch.update(studentRef, { 
-          balance: currentBalance - totalPrice, 
-          credits: currentBalance - totalPrice 
-        });
-      }
-
-      // Sync Stock to Firestore
-      for (const [itemId, stock] of Object.entries(newStocks)) {
-        const menuRef = doc(db, "menu", itemId);
-        batch.update(menuRef, { stock: stock });
-      }
-      
-      await batch.commit();
-
-      // Calculation
-      const queuePosition = Math.max(0, nextNumber - currentlyServing);
-      const waitTimeSeconds = queuePosition * 3; // 3 seconds per order
-      
-      const now = new Date();
-      const startTime = new Date(now.getTime() + waitTimeSeconds * 1000);
-      const endTime = new Date(startTime.getTime() + 180 * 1000); // 3 minute window
-      
-      const formatTime = (date: Date) => date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      const estimatedServingWindow = `${formatTime(startTime)} - ${formatTime(endTime)}`;
-
-      // 3. Push Order to RTDB
-      const activeOrdersRef = ref(rtdb, "active_orders");
-      const newOrderRef = push(activeOrdersRef);
-      const orderId = newOrderRef.key!;
-      
-      await set(newOrderRef, {
-        id: orderId,
-        userId,
-        userRollNo,
-        items,
+      const result = await securePlaceOrderFn({
+        cart: items,
         totalPrice,
-        status: "ordered",
         slotName: slotInfo.name,
-        slotTime: slotInfo.time,
-        counterNumber: 1,
-        orderNumber: nextNumber,
-        estimatedServingWindow,
-        qrUsed: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        paymentMode: "credit"
       });
 
-      return { id: orderId, orderNumber: nextNumber, estimatedServingWindow };
-
-    } catch (error) {
-      // Rollback RTDB Stock
-      for (const rollback of stockRollbacks) {
-        await runTransaction(rollback.ref, (data) => {
-          if (data === null) return data;
-          data.stock += rollback.qty;
-          if (data.stock > (data.minStock || 0)) {
-            data.available = true;
-          }
-          return data;
-        });
+      const data = result.data as any;
+      if (data.success) {
+        return {
+          id: data.orderId,
+          orderNumber: data.orderNumber,
+          estimatedServingWindow: data.estimatedServingWindow || "Soon",
+        };
+      } else {
+        throw new Error("Order creation rejected by server");
       }
-      throw error;
+    } catch (error: any) {
+      console.error("Cloud function securePlaceOrder error:", error);
+      throw new Error(error?.message || "Failed to place secure order.");
     }
   }
 };

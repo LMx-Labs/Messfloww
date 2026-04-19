@@ -1,9 +1,7 @@
-import { collection, query, where, getDocs, orderBy, Timestamp } from "firebase/firestore";
-import { db } from "../../core/firebase";
-import { rtdbService } from "./rtdbService";
-import { Student } from "../context/StudentContext";
-import { Order } from "../context/OrderContext";
-import { MenuItem } from "../context/MenuContext";
+import { collection, query, where, getDocs, orderBy, Timestamp, limit, getDoc, doc } from "firebase/firestore";
+import { ref, get } from "firebase/database";
+import { db, rtdb } from "../../core/firebase";
+import { Student, Order, MenuItem } from "../../shared/types";
 
 // --- Types ---
 export interface ReportData {
@@ -12,6 +10,34 @@ export interface ReportData {
   data: any;
   insights: string[];
 }
+
+// --- Utilities ---
+export const groupOrdersByHour = (orders: Order[]) => {
+  const hourlyData = new Array(24).fill(0).map((_, i) => ({ hour: `${i}:00`, orders: 0, revenue: 0 }));
+  orders.forEach(order => {
+    if (order.status !== 'cancelled' && order.createdAt) {
+        const hour = new Date(order.createdAt).getHours();
+        hourlyData[hour].orders += 1;
+        hourlyData[hour].revenue += order.totalPrice;
+    }
+  });
+  return hourlyData;
+};
+
+export const groupOrdersByDate = (orders: Order[]) => {
+  const dailyStats: Record<string, { revenue: number, orders: number }> = {};
+  orders.forEach(order => {
+    if (order.status !== 'cancelled' && order.createdAt) {
+      const dateStr = new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+      if (!dailyStats[dateStr]) {
+        dailyStats[dateStr] = { revenue: 0, orders: 0 };
+      }
+      dailyStats[dateStr].revenue += order.totalPrice;
+      dailyStats[dateStr].orders += 1;
+    }
+  });
+  return dailyStats;
+};
 
 // --- Data Fetchers ---
 
@@ -26,6 +52,9 @@ export const fetchOrdersForRange = async (startDate: Date, endDate: Date): Promi
   const snapshot = await getDocs(q);
   const orders: Order[] = [];
   snapshot.forEach((doc) => orders.push({ id: doc.id, ...doc.data() } as Order));
+  
+
+
   return orders;
 };
 
@@ -41,8 +70,8 @@ export const fetchLedgerEntries = async (startDate: Date, endDate: Date): Promis
     const ledgerRef = collection(db, "ledger");
     const q = query(
         ledgerRef,
-        where("timestamp", ">=", startDate.toISOString()),
-        where("timestamp", "<=", endDate.toISOString()),
+        where("timestamp", ">=", Timestamp.fromDate(startDate)),
+        where("timestamp", "<=", Timestamp.fromDate(endDate)),
         orderBy("timestamp", "desc")
     );
     const snapshot = await getDocs(q);
@@ -53,10 +82,12 @@ export const fetchLedgerEntries = async (startDate: Date, endDate: Date): Promis
 
 // Assuming menu items are stored in a structure we can fetch. For now, we simulate fetching menu with stock.
 // A real implementation would query the 'menu' collection and merge with 'menu_stock' from RTDB.
-export const fetchMenuWithStock = async (): Promise<Record<string, MenuItem[]>> => {
-    // Placeholder fetching logic.  In a fully unified system, this would pull from Firestore then attach RTDB stock.
-    // For now we will rely on data passed in where needed, or expand this if a global menu store exists.
-    return {};
+export const fetchMenuWithStock = async (): Promise<MenuItem[]> => {
+    const menuRef = collection(db, "menu");
+    const snapshot = await getDocs(menuRef);
+    const items: MenuItem[] = [];
+    snapshot.forEach(doc => items.push({ ...doc.data() } as MenuItem));
+    return items;
 };
 
 
@@ -143,16 +174,7 @@ export const generatePeakHourSales = async (date: Date): Promise<ReportData> => 
     endOfDay.setHours(23, 59, 59, 999);
 
     const orders = await fetchOrdersForRange(startOfDay, endOfDay);
-    const hourlyData = new Array(24).fill(0).map((_, i) => ({ hour: `${i}:00`, orders: 0, revenue: 0 }));
-
-    orders.forEach(order => {
-        if (order.status !== 'cancelled' && order.createdAt) {
-            const orderDate = new Date(order.createdAt);
-            const hour = orderDate.getHours();
-            hourlyData[hour].orders += 1;
-            hourlyData[hour].revenue += order.totalPrice;
-        }
-    });
+    const hourlyData = groupOrdersByHour(orders);
 
     // Find peak hour
     let peakHour = 0;
@@ -251,36 +273,478 @@ export const generateWalletBalanceSummary = async (): Promise<ReportData> => {
 // Implementation stubs for remaining planned reports.
 // These would be expanded based on specific data structures.
 
-export const generateWalletRechargeReport = async (startDate: Date, endDate: Date) => { return { title: "Recharges", generatedAt: "", data: {}, insights: [] }; }
-export const generateTopSpenders = async (startDate: Date, endDate: Date) => { return { title: "Top Spenders", generatedAt: "", data: {}, insights: [] }; }
-export const generateLowBalanceStudents = async (threshold: number) => { return { title: "Low Balance", generatedAt: "", data: {}, insights: [] }; }
+export const generateWalletRechargeReport = async (startDate: Date, endDate: Date): Promise<ReportData> => {
+    const ledgerRef = collection(db, "ledger");
+    const q = query(
+        ledgerRef,
+        where("type", "==", "topup"),
+        where("timestamp", ">=", Timestamp.fromDate(startDate)),
+        where("timestamp", "<=", Timestamp.fromDate(endDate)),
+        orderBy("timestamp", "desc")
+    );
+    const snapshot = await getDocs(q);
+    const recharges: any[] = [];
+    snapshot.forEach((doc) => recharges.push({ id: doc.id, ...doc.data() }));
+    
+    const dailyMap: Record<string, number> = {};
+    const curr = new Date(startDate);
+    while (curr <= endDate) {
+        const dateStr = curr.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+        dailyMap[dateStr] = 0;
+        curr.setDate(curr.getDate() + 1);
+    }
+    
+    let totalRecharged = 0;
 
-export const generateStockConsumption = async (date: Date) => { return { title: "Stock Consumption", generatedAt: "", data: {}, insights: [] }; }
-export const generateLowStockAlerts = async () => { return { title: "Low Stock Alerts", generatedAt: "", data: {}, insights: [] }; }
+    recharges.forEach(exec => {
+        const ts = exec.timestamp?.toDate ? exec.timestamp.toDate() : new Date(exec.timestamp);
+        const dateStr = ts.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+        if (dailyMap[dateStr] !== undefined) {
+            dailyMap[dateStr] += (exec.amount || 0);
+        } else {
+            dailyMap[dateStr] = (exec.amount || 0);
+        }
+        totalRecharged += (exec.amount || 0);
+    });
 
-export const generateFoodUtilization = async (date: Date) => { return { title: "Food Util", generatedAt: "", data: {}, insights: [] }; }
-export const generateFastVsSlowItems = async (startDate: Date, endDate: Date) => { return { title: "Item Velocity", generatedAt: "", data: {}, insights: [] }; }
+    const dailyRecharges = Object.keys(dailyMap).map(date => ({
+        date,
+        amount: dailyMap[date]
+    }));
 
-export const generateOrdersPerHour = async (date: Date) => { return generatePeakHourSales(date); } // Re-use logic for now
-export const generateAvgOrderSize = async (startDate: Date, endDate: Date) => { return { title: "Avg Order Size", generatedAt: "", data: {}, insights: [] }; }
-export const generateCounterLoadDistribution = async (date: Date) => { return { title: "Counter Load", generatedAt: "", data: {}, insights: [] }; }
+    return {
+        title: "Recharge Volume",
+        generatedAt: new Date().toISOString(),
+        data: { dailyRecharges, totalRecharged },
+        insights: [
+            `Total ₹${totalRecharged.toLocaleString()} recharged in this period.`
+        ]
+    };
+};
 
-export const generateMostOrderedItems = async (startDate: Date, endDate: Date) => { return generateItemWiseRevenue(startDate, endDate); } // Highly correlated
-export const generateStudentPatterns = async (startDate: Date, endDate: Date) => { return { title: "Student Patterns", generatedAt: "", data: {}, insights: [] }; }
+export const generateTopSpenders = async (startDate: Date, endDate: Date): Promise<ReportData> => {
+    const orders = await fetchOrdersForRange(startDate, endDate);
+    const spendersMap: Record<string, { regNo: string, spend: number }> = {};
 
-export const generateWeeklyTrends = async () => { return { title: "Weekly Trends", generatedAt: "", data: {}, insights: [] }; }
-export const generateMonthlyTrends = async () => { return { title: "Monthly Trends", generatedAt: "", data: {}, insights: [] }; }
+    orders.forEach(order => {
+        if (order.status !== 'cancelled') {
+            const key = order.userRollNo || order.userId;
+            if (!spendersMap[key]) {
+                spendersMap[key] = { regNo: key, spend: 0 };
+            }
+            spendersMap[key].spend += order.totalPrice;
+        }
+    });
 
-export const generateSmartInsights = async () => {
+    const spenders = Object.values(spendersMap)
+        .sort((a, b) => b.spend - a.spend)
+        .slice(0, 10);
+
+    const fullSpenders = await Promise.all(spenders.map(async (s) => {
+        const studentRef = collection(db, "students");
+        const querySnap = await getDocs(query(studentRef, where("regNo", "==", s.regNo), limit(1)));
+        let name = "Student " + (s.regNo || "Unknown");
+        if (!querySnap.empty) {
+            name = querySnap.docs[0].data().name || name;
+        }
+        return {
+            ...s,
+            name
+        };
+    }));
+
+    return {
+        title: "Top Spenders",
+        generatedAt: new Date().toISOString(),
+        data: { spenders: fullSpenders },
+        insights: fullSpenders.length > 0 ? [`${fullSpenders[0].name} is the highest spender.`] : []
+    };
+};
+
+export const generateLowBalanceStudents = async (threshold: number): Promise<ReportData> => {
+    const studentsRef = collection(db, "students");
+    const q = query(studentsRef, where("balance", "<=", threshold), orderBy("balance", "asc"), limit(20));
+    const snapshot = await getDocs(q);
+    const lowBalance: Student[] = [];
+    snapshot.forEach((doc) => lowBalance.push({ id: doc.id, ...doc.data() } as unknown as Student));
+
+    return {
+        title: "Low Balance Alerts",
+        generatedAt: new Date().toISOString(),
+        data: { students: lowBalance },
+        insights: [`${lowBalance.length} students are below the ₹${threshold} threshold.`]
+    };
+};
+
+export const generateStockConsumption = async (date: Date): Promise<ReportData> => {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [orders, menuItems] = await Promise.all([
+        fetchOrdersForRange(startOfDay, endOfDay),
+        fetchMenuWithStock()
+    ]);
+
+    const consumedMap: Record<number, number> = {};
+    orders.forEach(order => {
+        if (order.status !== 'cancelled') {
+            order.items?.forEach(item => {
+                consumedMap[item.id] = (consumedMap[item.id] || 0) + item.qty;
+            });
+        }
+    });
+
+    const consumption = menuItems.map(item => {
+        const consumed = consumedMap[item.id] || 0;
+        const initial = Math.max(item.stock || 0, item.initialStock || (consumed + (item.stock || 0)));
+        return {
+            name: item.name,
+            consumed: consumed,
+            remaining: Math.max(0, initial - consumed),
+            initial: initial
+        };
+    }).filter(c => c.initial > 0 || c.consumed > 0);
+
+    return {
+        title: "Stock Consumption",
+        generatedAt: new Date().toISOString(),
+        data: { consumption },
+        insights: []
+    };
+};
+
+export const generateLowStockAlerts = async (): Promise<ReportData> => {
+    const stockRef = ref(rtdb, "menu_stock");
+    const snap = await get(stockRef);
+    const stockMap: Record<string, any> = snap.exists() ? snap.val() : {};
+
+    const menuItems = await fetchMenuWithStock();
+    const alerts = menuItems.map(item => {
+        const live = stockMap[item.id];
+        if (live && live.stock <= live.minStock) {
+            return { id: item.id, name: item.name, stock: live.stock, minStock: live.minStock };
+        }
+        return null;
+    }).filter(Boolean);
+
+    return {
+        title: "Low Stock Alerts",
+        generatedAt: new Date().toISOString(),
+        data: { alerts },
+        insights: alerts.length > 0 ? [`${alerts.length} items are currently critically low.`] : ["Stock levels are healthy."]
+    };
+};
+
+export const generateFoodUtilization = async (date: Date): Promise<ReportData> => {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [orders, menuItems] = await Promise.all([
+        fetchOrdersForRange(startOfDay, endOfDay),
+        fetchMenuWithStock()
+    ]);
+
+    const consumedMap: Record<number, number> = {};
+    orders.forEach(order => {
+        if (order.status !== 'cancelled') {
+            order.items?.forEach(item => {
+                consumedMap[item.id] = (consumedMap[item.id] || 0) + item.qty;
+            });
+        }
+    });
+
+    const utilization = menuItems.map(item => {
+        const sold = consumedMap[item.id] || 0;
+        const prepared = item.initialStock || 0;
+        const rate = prepared > 0 ? Math.round((sold / prepared) * 100) : 0;
+        return {
+            id: item.id,
+            name: item.name,
+            prepared,
+            sold,
+            rate
+        };
+    }).filter(u => u.prepared > 0 || u.sold > 0);
+
+    return {
+        title: "Food Utilization",
+        generatedAt: new Date().toISOString(),
+        data: { utilization },
+        insights: []
+    };
+};
+
+export const generateFastVsSlowItems = async (startDate: Date, endDate: Date): Promise<ReportData> => {
+    const orders = await fetchOrdersForRange(startDate, endDate);
+    const frequency: Record<string, { qty: number, name: string, id: number }> = {};
+
+    orders.forEach(o => {
+        o.items?.forEach(i => {
+            if (!frequency[i.id]) frequency[i.id] = { qty: 0, name: i.name, id: i.id };
+            frequency[i.id].qty += i.qty;
+        });
+    });
+
+    const sorted = Object.values(frequency).sort((a, b) => b.qty - a.qty);
+    const fastMovers = sorted.slice(0, 5);
+    const slowMovers = sorted.slice(-5).reverse();
+
+    return {
+        title: "Item Velocity",
+        generatedAt: new Date().toISOString(),
+        data: { fastMovers, slowMovers },
+        insights: []
+    };
+};
+
+export const generateSmartInsights = async (): Promise<ReportData> => {
+    // Collect some real signals
+    const [lowStock, weeklyOrders] = await Promise.all([
+        generateLowStockAlerts(),
+        fetchOrdersForRange(new Date(Date.now() - 7 * 86400000), new Date())
+    ]);
+
+    const insights = [];
+
+    // Signal: Low Stock
+    if (lowStock.data.alerts.length > 0) {
+        insights.push({
+            id: 'ls',
+            type: 'warning',
+            title: 'Inventory Alert',
+            description: `${lowStock.data.alerts[0].name} is low on stock (${lowStock.data.alerts[0].stock} left).`,
+            action: 'Check Menu Stock'
+        });
+    }
+
+    // Signal: Revenue Growth
+    if (weeklyOrders.length > 50) {
+        insights.push({
+            id: 'hg',
+            type: 'success',
+            title: 'High Activity',
+            description: `You've processed ${weeklyOrders.length} orders this week. Volume is healthy.`,
+            action: 'View Sales'
+        });
+    } else {
+        insights.push({
+            id: 'hg',
+            type: 'info',
+            title: 'Low Activity',
+            description: `Only ${weeklyOrders.length} orders this week. Consider promotions.`,
+            action: 'View Marketing'
+        });
+    }
+
+    // Signal: Slow Items (Underperforming)
+    const velocityData = await generateFastVsSlowItems(new Date(Date.now() - 7 * 86400000), new Date());
+    const slowMovers = velocityData.data.slowMovers || [];
+    const underperforming = slowMovers.map((i: any) => ({ name: i.name, value: i.qty }));
+
+    // Signal: High Waste (Low Sell-Through)
+    const utilizationReport = await generateFoodUtilization(new Date());
+    const waste = utilizationReport.data.utilization
+        .filter((u: any) => u.rate < 40)
+        .map((u: any) => ({ name: u.name, waste: u.prepared - u.sold }));
+
+    // Signal: Demand (Peak Hours)
+    const peakReport = await generatePeakHourSales(new Date());
+    const demand = peakReport.insights;
+
     return {
         title: "Smart Insights",
         generatedAt: new Date().toISOString(),
-        data: {
-            topInsights: [
-                { id: 1, type: 'warning', title: 'Low Stock Alert', description: 'Maggi is running below 10 units.', action: 'Restock soon' },
-                { id: 2, type: 'success', title: 'High Demand', description: 'Cold Coffee sales are up 20% this week.', action: 'Ensure sufficient supply' }
-            ]
+        data: { 
+            topInsights: insights,
+            underperforming,
+            waste,
+            demand
         },
-        insights: ["Review these insights to optimize operations."]
+        insights: ["Derived from live operational data."]
     };
-}
+};
+
+export const generateOrdersPerHour = async (date: Date): Promise<ReportData> => {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const orders = await fetchOrdersForRange(startOfDay, endOfDay);
+    const hourlyData = groupOrdersByHour(orders);
+
+    return {
+        title: "Orders Per Hour",
+        generatedAt: new Date().toISOString(),
+        data: { hourlyData },
+        insights: []
+    };
+};
+
+export const generateCounterLoadDistribution = async (date: Date): Promise<ReportData> => {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const orders = await fetchOrdersForRange(startOfDay, endOfDay);
+    const loadMap: Record<string, number> = {};
+
+    orders.forEach(order => {
+        if (order.status !== 'cancelled') {
+            const slot = order.slotName || 'Unknown';
+            loadMap[slot] = (loadMap[slot] || 0) + 1;
+        }
+    });
+
+    const loadData = Object.keys(loadMap).map(name => ({
+        name: name.charAt(0).toUpperCase() + name.slice(1),
+        orders: loadMap[name]
+    })).sort((a, b) => b.orders - a.orders);
+
+    return {
+        title: "Counter Load Distribution",
+        generatedAt: new Date().toISOString(),
+        data: { loadData },
+        insights: []
+    };
+};
+
+export const generateMostOrderedItems = async (startDate: Date, endDate: Date): Promise<ReportData> => {
+    const orders = await fetchOrdersForRange(startDate, endDate);
+    const itemFreq: Record<string, { name: string, qty: number }> = {};
+
+    orders.forEach(order => {
+        if (order.status !== 'cancelled' && order.items) {
+            order.items.forEach(item => {
+                if (!itemFreq[item.id]) itemFreq[item.id] = { name: item.name, qty: 0 };
+                itemFreq[item.id].qty += item.qty;
+            });
+        }
+    });
+
+    const topItems = Object.values(itemFreq)
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, 10);
+
+    return {
+        title: "Most Ordered Items",
+        generatedAt: new Date().toISOString(),
+        data: { topItems },
+        insights: []
+    };
+};
+
+export const generateStudentPatterns = async (startDate: Date, endDate: Date): Promise<ReportData> => {
+    const orders = await fetchOrdersForRange(startDate, endDate);
+    const userOrderCounts: Record<string, number> = {};
+
+    orders.forEach(order => {
+        if (order.status !== 'cancelled') {
+            const userKey = order.userRollNo || order.userId || 'Guest';
+            userOrderCounts[userKey] = (userOrderCounts[userKey] || 0) + 1;
+        }
+    });
+
+    let repeat = 0;
+    let newUsers = 0;
+    
+    Object.values(userOrderCounts).forEach(count => {
+        if (count >= 2) repeat++;
+        else newUsers++;
+    });
+
+    const userMix = [
+        { name: "Repeat Users", value: repeat, fill: "var(--primary)" },
+        { name: "New Users", value: newUsers, fill: "var(--accent)" }
+    ];
+
+    return {
+        title: "Active Users",
+        generatedAt: new Date().toISOString(),
+        data: { userMix, totalActive: repeat + newUsers },
+        insights: []
+    };
+};
+
+export const generateWeeklyTrends = async (): Promise<ReportData> => {
+    const end = new Date();
+    const start = new Date(Date.now() - 6 * 86400000); // last 7 days including today
+    start.setHours(0, 0, 0, 0);
+
+    const orders = await fetchOrdersForRange(start, end);
+    const dailyStats: Record<string, { revenue: number, orders: number }> = {};
+
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(start.getTime() + i * 86400000);
+        const dateStr = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+        dailyStats[dateStr] = { revenue: 0, orders: 0 };
+    }
+
+    orders.forEach(order => {
+        if (order.status !== 'cancelled' && order.createdAt) {
+            const d = new Date(order.createdAt);
+            const dateStr = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            if (dailyStats[dateStr]) {
+                dailyStats[dateStr].revenue += order.totalPrice;
+                dailyStats[dateStr].orders += 1;
+            }
+        }
+    });
+
+    const trend = Object.keys(dailyStats).map(dateStr => ({
+        date: dateStr,
+        revenue: dailyStats[dateStr].revenue,
+        orders: dailyStats[dateStr].orders
+    }));
+
+    return {
+        title: "Revenue Trend (Last 7 Days)",
+        generatedAt: new Date().toISOString(),
+        data: { trend },
+        insights: []
+    };
+};
+
+export const generateMonthlyTrends = async (): Promise<ReportData> => {
+    const end = new Date();
+    const start = new Date(Date.now() - 29 * 86400000); // last 30 days
+    start.setHours(0, 0, 0, 0);
+
+    const orders = await fetchOrdersForRange(start, end);
+    const dailyStats: Record<string, { revenue: number, orders: number }> = {};
+
+    for (let i = 0; i < 30; i++) {
+        const d = new Date(start.getTime() + i * 86400000);
+        const dateStr = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+        dailyStats[dateStr] = { revenue: 0, orders: 0 };
+    }
+
+    orders.forEach(order => {
+        if (order.status !== 'cancelled' && order.createdAt) {
+            const d = new Date(order.createdAt);
+            const dateStr = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            if (dailyStats[dateStr]) {
+                dailyStats[dateStr].revenue += order.totalPrice;
+                dailyStats[dateStr].orders += 1;
+            }
+        }
+    });
+
+    const trend = Object.keys(dailyStats).map(dateStr => ({
+        date: dateStr,
+        revenue: dailyStats[dateStr].revenue,
+        orders: dailyStats[dateStr].orders
+    }));
+
+    return {
+        title: "Revenue Trend (Last 30 Days)",
+        generatedAt: new Date().toISOString(),
+        data: { trend },
+        insights: []
+    };
+};

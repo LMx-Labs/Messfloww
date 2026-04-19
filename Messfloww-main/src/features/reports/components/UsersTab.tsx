@@ -86,7 +86,7 @@ export function UsersTab({ startDate, endDate }: UsersTabProps) {
                 ))}
               </div>
             ) : (
-              <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">Engine Stub</div>
+              <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">No item data for this period</div>
             )}
           </div>
         </div>
@@ -124,7 +124,7 @@ export function UsersTab({ startDate, endDate }: UsersTabProps) {
                  </PieChart>
                </ResponsiveContainer>
             ) : (
-               <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">Engine Stub</div>
+               <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">No user pattern data yet</div>
             )}
           </div>
         </div>

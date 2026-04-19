@@ -143,14 +143,19 @@ export function WalletTab({ startDate, endDate }: WalletTabProps) {
                       <div className="font-semibold text-foreground flex items-center gap-2">
                         <span className="text-muted-foreground w-4 text-xs">{i + 1}.</span> {student.name}
                       </div>
-                      <div className="text-xs text-muted-foreground ml-6">{student.regNo}</div>
+                      <div className="flex items-center gap-2 ml-6">
+                        <span className="text-xs text-muted-foreground">{student.regNo}</span>
+                        <a href={`/students?search=${student.regNo}`} className="text-[10px] text-accent hover:underline flex items-center gap-1">
+                          Profile <ArrowUpRight className="h-3 w-3" />
+                        </a>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-primary">₹{student.spend.toLocaleString()}</td>
                   </tr>
                 ))}
                 {(!topSpendersData?.data.spenders || topSpendersData.data.spenders.length === 0) && (
                   <tr>
-                    <td colSpan={2} className="text-center py-6 text-muted-foreground">Under construction in Engine</td>
+                    <td colSpan={2} className="text-center py-6 text-muted-foreground">No spending data for this period</td>
                   </tr>
                 )}
               </tbody>
@@ -187,7 +192,7 @@ export function WalletTab({ startDate, endDate }: WalletTabProps) {
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">Engine Stub</div>
+                <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">No recharge data for this period</div>
               )}
             </div>
           </div>
@@ -220,7 +225,7 @@ export function WalletTab({ startDate, endDate }: WalletTabProps) {
                   ))}
                 </div>
               ) : (
-                 <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">Engine Stub</div>
+                 <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">No critical balances right now</div>
               )}
             </div>
           </div>

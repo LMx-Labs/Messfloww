@@ -6,37 +6,9 @@ import {
 } from "firebase/firestore";
 import { db } from "../../core/firebase/config";
 import { rtdbService } from "../../core/firebase/rtdbService";
+import { OrderItem, OrderStatus, OrderDoc, MealSlot } from "../../types/order.types";
 
-export interface OrderItem {
-  id: number;
-  name: string;
-  price: number;
-  qty: number;
-}
-
-export type OrderStatus = "ordered" | "preparing" | "ready" | "completed" | "cancelled" | "expired";
-
-export interface OrderDoc {
-  id: string;
-  userId: string;
-  userRollNo: string;
-  items: OrderItem[];
-  totalPrice: number;
-  status: OrderStatus;
-  slotName: string;
-  slotTime: string;
-  counterNumber: number;
-  orderNumber: number; // Daily incremental number
-  estimatedServingWindow: string; // e.g. "12:45 PM - 12:48 PM"
-  qrUsed: boolean;
-  createdAt: string; // ISO string
-  updatedAt: string;
-}
-
-export interface MealSlot {
-  name: string;
-  time: string;
-}
+export type { OrderItem, OrderStatus, OrderDoc, MealSlot };
 
 export const orderService = {
   /**

@@ -34,9 +34,23 @@ export const timeSlotService = {
 
   async deactivateSlot() {
     const slotRef = doc(db, "timeSlots", "current");
-    await setDoc(slotRef, { active: false, slot: null });
+    const snap = await getDoc(slotRef);
+    let slotName = "UNKNOWN";
+    if (snap.exists() && snap.data().active && snap.data().slot) {
+      slotName = snap.data().slot.name;
+    }
 
+    await setDoc(slotRef, { active: false, slot: null });
     await rtdbService.setMessStatus({ isOpen: false });
+
+    if (slotName !== "UNKNOWN") {
+      try {
+        const { slotCloseService } = await import("./slotCloseService");
+        await slotCloseService.refundPendingOrders(slotName);
+      } catch (e) {
+        console.error("Failed to auto-refund on slot close", e);
+      }
+    }
   },
 
   async getTimeSlotsConfig(): Promise<TimeSlot[] | null> {

@@ -103,20 +103,21 @@ export function ExternalOrderPage() {
       userRollNo: "SHOP",
       items: cart.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity })),
       totalPrice: total,
-      status: "preparing",
+      status: "pending",
+      payment_mode: "upi",
       slotName: activeSlotKey,
       slotTime: "N/A",
       orderNumber: Date.now() % 1000,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isExternal: true
-    };
+    } as any;
 
     try {
-      await kitchenService.pushActiveOrder(newOrder);
       for (const item of cart) {
-        decreaseStock(activeSlotKey, item.id, item.quantity);
+        await kitchenService.decrementStock(item.id, item.quantity);
       }
+      await kitchenService.pushActiveOrder(newOrder);
       printReceipt(mapOrderToBill(newOrder as any), settings);
       toast.success(`Order placed successfully! ID: ${orderId}`);
       setCart([]);

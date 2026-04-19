@@ -17,6 +17,14 @@ export const kitchenService = {
         const timeB = new Date(b.createdAt).getTime();
         return timeB - timeA;
       });
+      
+      // Update local storage cache for offline scanning fallback
+      try {
+        localStorage.setItem("offline_orders_cache", JSON.stringify(orders));
+      } catch(e) {
+        console.error("Failed to cache offline orders", e);
+      }
+      
       callback(orders);
     });
   },
@@ -24,7 +32,7 @@ export const kitchenService = {
   async updateActiveOrderStatus(orderId: string, field: string, status: string) {
     const orderRef = ref(rtdb, `active_orders/${orderId}`);
     
-    const terminalStatuses = ["completed", "cancelled", "expired"];
+    const terminalStatuses = ["completed", "collected", "cancelled", "expired", "refunded"];
     if (field === 'status' && terminalStatuses.includes(status)) {
         // Fetch full order
         const snap = await get(orderRef);
@@ -54,6 +62,37 @@ export const kitchenService = {
     return orderData.id;
   },
 
+  async atomicCollectOrder(orderId: string) {
+    const orderRef = ref(rtdb, `active_orders/${orderId}`);
+    const result = await runTransaction(orderRef, (orderData) => {
+      if (orderData === null) return orderData;
+      
+      if (orderData.status === 'ordered' || orderData.status === 'pending' || orderData.status === 'preparing') {
+        if (!orderData.qrUsed) {
+          orderData.qrUsed = true;
+          orderData.status = 'collected';
+          orderData.updatedAt = new Date().toISOString();
+          return orderData;
+        }
+      }
+      return; // abort
+    });
+
+    if (result.committed && result.snapshot.val()) {
+      const orderData = result.snapshot.val();
+      
+      await setDoc(doc(db, "historical_orders", orderId), {
+          ...orderData,
+          archivedAt: new Date().toISOString()
+      });
+      await remove(orderRef);
+      
+      return orderData;
+    } else {
+      throw new Error("Order already collected, cancelled, or not pending.");
+    }
+  },
+
   async removeActiveOrder(orderId: string) {
     const orderRef = ref(rtdb, `active_orders/${orderId}`);
     await remove(orderRef);
@@ -64,6 +103,28 @@ export const kitchenService = {
     const snap = await get(orderRef);
     if (snap.exists()) {
       return { id: snap.key, ...snap.val() };
+    }
+    return null;
+  },
+
+  async getActiveOrderSearchFallback(searchTerm: string) {
+    const activeOrdersRef = ref(rtdb, "active_orders");
+    const snap = await get(activeOrdersRef);
+    if (snap.exists()) {
+      const allOrders = snap.val();
+      const numSearch = Number(searchTerm);
+      const isNum = !isNaN(numSearch);
+      
+      for (const key in allOrders) {
+        const order = allOrders[key];
+        // Search by orderNumber or Roll No
+        if (isNum && order.orderNumber === numSearch) {
+          return { id: key, ...order };
+        }
+        if (order.userRollNo?.toLowerCase() === searchTerm.toLowerCase()) {
+            return { id: key, ...order };
+        }
+      }
     }
     return null;
   },
