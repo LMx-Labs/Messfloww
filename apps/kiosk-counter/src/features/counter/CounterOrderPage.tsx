@@ -15,7 +15,8 @@ import {
   Student, 
   Order,
   MenuItem,
-  TimeSlot
+  TimeSlot,
+  stockService
 } from "@messflow/shared-core";
 import { toast } from "sonner";
 

@@ -25,7 +25,6 @@ import { MASTER_HASH, computeSHA256 } from "./AdminGate";
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard, roles: ["manager", "staff"] },
   { name: "Reports", href: "/reports", icon: BarChart3, roles: ["manager", "staff"] },
-  { name: "Orders", href: "/orders", icon: ShoppingCart, roles: ["manager", "staff"] },
   { name: "Menu", href: "/menu", icon: UtensilsCrossed, roles: ["manager", "staff"] },
   { name: "Passbook", href: "/passbook", icon: BookUser, roles: ["manager", "staff"] },
 ];

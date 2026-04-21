@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router";
+import { createBrowserRouter, Navigate } from "react-router";
 import { LoginPage } from "../auth/LoginPage";
 import { DashboardLayout } from "./DashboardLayout";
 import { DashboardPage } from "../../features/dashboard/DashboardPage";
@@ -37,7 +37,8 @@ export const router = createBrowserRouter([
           { path: "subscriptions", element: <ErrorBoundary featureName="Subscriptions"><ReportSubscriptionsPage /></ErrorBoundary> },
           { path: "settings", element: <ErrorBoundary featureName="Settings"><SettingsPage /></ErrorBoundary> },
         ]
-      }
+      },
+      { path: "*", element: <Navigate to="/" replace /> }
     ],
   },
 ]);

@@ -37,6 +37,7 @@ export function ExternalOrderPage() {
   const [settings, setSettings] = useState<any>(null);
   const [paymentMode, setPaymentMode] = useState<PaymentMode>("upi");
   const [counters, setCounters] = useState<any[]>([]);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
   const handleOfflineSync = useCallback(async (order: Order) => {
     // Only try to sync if we're actually online to avoid unnecessary throws
@@ -172,6 +173,7 @@ export function ExternalOrderPage() {
       
       setCart([]);
       setPaymentMode("upi");
+      setShowPaymentModal(false);
     } catch (e) {
       console.error("External order failed", e);
       toast.error("Failed to place order.");
@@ -295,7 +297,7 @@ export function ExternalOrderPage() {
                   </div>
                 </div>
 
-                <button onClick={handlePlaceOrder} disabled={cart.length === 0 || !hasSufficientStock} className="w-full h-16 bg-primary hover:bg-secondary text-primary-foreground rounded-xl font-black text-lg flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-[0_4px_14px_0_rgba(255,213,79,0.39)] disabled:opacity-50 disabled:shadow-none disabled:active:scale-100">
+                <button onClick={() => setShowPaymentModal(true)} disabled={cart.length === 0 || !hasSufficientStock} className="w-full h-16 bg-primary hover:bg-secondary text-primary-foreground rounded-xl font-black text-lg flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-[0_4px_14px_0_rgba(255,213,79,0.39)] disabled:opacity-50 disabled:shadow-none disabled:active:scale-100">
                   <Printer className="h-6 w-6" /> {!hasSufficientStock ? "Out of Stock" : `Pay ₹${total} & Print`}
                 </button>
               </>
@@ -303,6 +305,48 @@ export function ExternalOrderPage() {
           </div>
         </div>
       </div>
+
+      {/* Payment Confirmation Modal */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card w-full max-w-md rounded-2xl p-8 shadow-2xl border border-border animate-in fade-in zoom-in-95">
+            <div className="flex justify-center mb-6">
+              <div className="p-6 rounded-full bg-primary/20">
+                <Banknote className="h-16 w-16 text-primary" />
+              </div>
+            </div>
+            
+            <h2 className="text-2xl font-black text-foreground text-center mb-2">Confirm Payment</h2>
+            <p className="text-muted-foreground text-center mb-6">Has the customer completed the payment?</p>
+            
+            <div className="bg-muted rounded-xl p-4 mb-8">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-muted-foreground font-semibold">Total Amount</span>
+                <span className="text-xl font-bold text-primary">₹{total}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground font-semibold">Payment Mode</span>
+                <span className="font-bold uppercase bg-background px-2 py-1 rounded text-sm">{paymentMode}</span>
+              </div>
+            </div>
+            
+            <div className="flex gap-4">
+              <button 
+                onClick={() => setShowPaymentModal(false)}
+                className="flex-1 py-4 bg-muted text-foreground font-bold rounded-xl hover:bg-secondary transition-colors"
+              >
+                No, Cancel
+              </button>
+              <button 
+                onClick={handlePlaceOrder}
+                className="flex-1 py-4 bg-primary text-primary-foreground font-bold rounded-xl shadow-[0_4px_14px_0_rgba(255,213,79,0.39)] hover:bg-secondary transition-transform active:scale-95 flex justify-center items-center gap-2"
+              >
+                <Printer className="w-5 h-5" /> Yes, Print
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

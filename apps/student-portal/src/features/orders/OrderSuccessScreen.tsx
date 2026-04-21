@@ -95,15 +95,16 @@ export function OrderSuccessScreen() {
             className="flex justify-center mb-8"
           >
             <div className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest border ${
-              order.status === 'processing' || order.status === 'preparing'
+              order.status === 'ordered' || order.status === 'processing' || order.status === 'preparing'
                 ? 'bg-[#FFD54F]/10 text-[#FFD54F] border-[#FFD54F]/20'
                 : order.status === 'ready'
                 ? 'bg-[#10B981]/10 text-[#10B981] border-[#10B981]/20'
                 : 'bg-white/5 text-gray-300 border-white/10'
             }`}>
-              {order.status === 'processing' || order.status === 'preparing' ? 'In Kitchen' :
+              {order.status === 'ordered' ? 'Order Placed' :
+               order.status === 'processing' || order.status === 'preparing' ? 'In Kitchen' :
                order.status === 'ready' ? 'Ready for Collection' :
-               order.status === 'collected' ? 'Order Collected' : 'Pending Scan'}
+               order.status === 'collected' ? 'Order Collected' : 'Status Unknown'}
             </div>
           </motion.div>
         )}
@@ -138,7 +139,7 @@ export function OrderSuccessScreen() {
             <div className="bg-white p-2 rounded-xl mb-3">
               <QRCode value={qrCodeValue} size={140} level="H" />
             </div>
-            <span className="text-white text-[10px] font-bold uppercase tracking-wider">Your Code</span>
+            <span className="text-white text-[10px] font-bold uppercase tracking-wider">Pickup Code</span>
           </motion.div>
 
           <motion.div

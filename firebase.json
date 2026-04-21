@@ -1,4 +1,13 @@
 {
+  "functions": {
+    "source": "apps/admin-hq/functions"
+  },
+  "database": {
+    "rules": "database.rules.json"
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "hosting": [
     {
       "target": "student",
@@ -7,6 +16,14 @@
         "firebase.json",
         "**/.*",
         "**/node_modules/**"
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            { "key": "Cross-Origin-Opener-Policy", "value": "unsafe-none" }
+          ]
+        }
       ],
       "rewrites": [
         {
@@ -23,6 +40,14 @@
         "**/.*",
         "**/node_modules/**"
       ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            { "key": "Cross-Origin-Opener-Policy", "value": "unsafe-none" }
+          ]
+        }
+      ],
       "rewrites": [
         {
           "source": "**",
@@ -38,6 +63,14 @@
         "**/.*",
         "**/node_modules/**"
       ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            { "key": "Cross-Origin-Opener-Policy", "value": "unsafe-none" }
+          ]
+        }
+      ],
       "rewrites": [
         {
           "source": "**",
@@ -52,6 +85,14 @@
         "firebase.json",
         "**/.*",
         "**/node_modules/**"
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            { "key": "Cross-Origin-Opener-Policy", "value": "unsafe-none" }
+          ]
+        }
       ],
       "rewrites": [
         {

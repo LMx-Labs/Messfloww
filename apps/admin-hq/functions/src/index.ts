@@ -7,14 +7,16 @@ import { generateReportEmailHTML } from './services/emailTemplates';
 
 // Admin initialized in dataAggregator.ts, but let's ensure it here just in case this loads first
 if (admin.apps.length === 0) {
-  admin.initializeApp();
+  admin.initializeApp({
+    databaseURL: "https://messfloww-default-rtdb.asia-southeast1.firebasedatabase.app"
+  });
 }
 
 /**
  * Hourly Cron Job: Processes active report subscriptions and emails them.
  * Efficiency constraints: Limit queries, optimize sends.
  */
-export const processSubscriptions = functions.pubsub.schedule('every 1 hours').onRun(async (context) => {
+export const processSubscriptions = functions.pubsub.schedule('every 1 hours').onRun(async (context: any) => {
   const db = admin.firestore();
   
   // Current hour string matching the format stored in DB: "22:00"
@@ -103,7 +105,7 @@ export const processSubscriptions = functions.pubsub.schedule('every 1 hours').o
  * Minute-by-minute Cron Job: Automates Mess Slot Auto-Toggle (ON/OFF).
  * Ensures slots work irrespective of dashboard status.
  */
-export const checkMessSlotTimer = functions.pubsub.schedule('every 1 minutes').onRun(async (context) => {
+export const checkMessSlotTimer = functions.pubsub.schedule('every 1 minutes').onRun(async (context: any) => {
   const db = admin.firestore();
   const rtdb = admin.database();
 
@@ -224,7 +226,7 @@ export const checkMessSlotTimer = functions.pubsub.schedule('every 1 minutes').o
  * 4. Checks RTDB stock counts.
  * 5. Atomically performs deductions and creates the order.
  */
-export const securePlaceOrder = https.onCall(async (request) => {
+export const securePlaceOrder = https.onCall(async (request: https.CallableRequest) => {
   const { data, auth } = request;
   
   if (!auth?.uid) {
@@ -240,21 +242,20 @@ export const securePlaceOrder = https.onCall(async (request) => {
   const db = admin.firestore();
   const rtdb = admin.database();
 
-  // 1. Verify Admin is Online (Kill-Switch)
-  const systemStatusSnap = await rtdb.ref('system_status/admin_online').once('value');
-  const isAdminOnline = systemStatusSnap.val();
-  
-  if (!isAdminOnline) {
-    throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
-  }
-
-  // Generate unique order ID early (RTDB push key style)
-  const orderId = rtdb.ref('active_orders').push().key as string;
-  // Get order counter for today
-  const today = new Date().toISOString().split('T')[0];
-  const dailyCounterRef = db.doc(`orderCounters/${today}`);
-
   try {
+    // 1. Verify Admin is Online (Kill-Switch)
+    const systemStatusSnap = await rtdb.ref('system_status/admin_online').once('value');
+    const isAdminOnline = systemStatusSnap.val();
+    
+    if (isAdminOnline === false) {
+      throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
+    }
+
+    // Generate unique order ID early (RTDB push key style)
+    const orderId = rtdb.ref('active_orders').push().key as string;
+    // Get order counter for today
+    const today = new Date().toISOString().split('T')[0];
+    const dailyCounterRef = db.doc(`orderCounters/${today}`);
     const result = await db.runTransaction(async (transaction) => {
       // 2. Load User and Student records
       const userRef = db.collection('users').doc(auth.uid);
@@ -302,7 +303,7 @@ export const securePlaceOrder = https.onCall(async (request) => {
       // A better way is using Admin SDK to check stock via RTDB transaction FIRST.
       // Wait, let's do RTDB transaction inside Firestore transaction? It's async. We can!
       
-      return { userSnap, studentRef, studentData, dailyCounterRef, orderNumber, counterSnap };
+      return { userSnap, studentRef, studentData, dailyCounterRef, orderNumber, counterExists: counterSnap.exists };
     });
 
     // 4. Perform RTDB Stock checks and deductions atomically for ALL items
@@ -363,7 +364,7 @@ export const securePlaceOrder = https.onCall(async (request) => {
          transaction.update(result.studentRef, { balance: newBal, credits: newCred });
          transaction.update(db.collection('users').doc(auth.uid), { walletBalance: newBal });
        }
-       if (result.counterSnap.exists) {
+       if (result.counterExists) {
          transaction.update(result.dailyCounterRef, { count: result.orderNumber });
        } else {
          transaction.set(result.dailyCounterRef, { count: result.orderNumber, date: today });
@@ -393,10 +394,10 @@ export const securePlaceOrder = https.onCall(async (request) => {
       totalPrice,
       slotName,
       payment_mode: paymentMode,
-      status: 'pending',
+      status: 'ordered',
       sync_status: 'cloud',
       estimatedServingWindow,
-      createdAt: nowTimestamp,
+      createdAt: new Date().toISOString(),
       timestamp: admin.database.ServerValue.TIMESTAMP
     };
 
@@ -405,7 +406,33 @@ export const securePlaceOrder = https.onCall(async (request) => {
     return { success: true, orderId, orderNumber: result.orderNumber, estimatedServingWindow };
 
   } catch (error: any) {
-    functions.logger.error('securePlaceOrder failed', error);
-    throw new https.HttpsError('internal', error.message || 'Transaction failed');
+    functions.logger.error('securePlaceOrder failed', JSON.stringify({
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      httpErrorCode: error?.httpErrorCode,
+      stack: error?.stack?.substring(0, 500),
+    }));
+    // HttpsError thrown inside db.runTransaction gets wrapped by Firestore.
+    // Check for it directly first, then look for wrapped message patterns.
+    if (error instanceof https.HttpsError) {
+      throw error;
+    }
+    // Firestore wraps thrown errors — try to extract meaningful message
+    const msg = error?.message || 'Transaction failed';
+    // Map common Firestore/RTDB error messages back to useful codes
+    if (msg.includes('Insufficient wallet balance')) {
+      throw new https.HttpsError('resource-exhausted', msg);
+    }
+    if (msg.includes('Student record not found') || msg.includes('User profile not found')) {
+      throw new https.HttpsError('not-found', msg);
+    }
+    if (msg.includes('registered student') || msg.includes('disabled') || msg.includes('Admin is offline')) {
+      throw new https.HttpsError('failed-precondition', msg);
+    }
+    if (msg.includes('Out of stock')) {
+      throw new https.HttpsError('resource-exhausted', msg);
+    }
+    throw new https.HttpsError('internal', msg);
   }
 });

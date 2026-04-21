@@ -42,7 +42,9 @@ const dataAggregator_1 = require("./services/dataAggregator");
 const emailTemplates_1 = require("./services/emailTemplates");
 // Admin initialized in dataAggregator.ts, but let's ensure it here just in case this loads first
 if (admin.apps.length === 0) {
-    admin.initializeApp();
+    admin.initializeApp({
+        databaseURL: "https://messfloww-default-rtdb.asia-southeast1.firebasedatabase.app"
+    });
 }
 /**
  * Hourly Cron Job: Processes active report subscriptions and emails them.
@@ -234,6 +236,7 @@ exports.checkMessSlotTimer = functions.pubsub.schedule('every 1 minutes').onRun(
  * 5. Atomically performs deductions and creates the order.
  */
 exports.securePlaceOrder = https.onCall(async (request) => {
+    var _a;
     const { data, auth } = request;
     if (!(auth === null || auth === void 0 ? void 0 : auth.uid)) {
         throw new https.HttpsError('unauthenticated', 'You must be logged in to place an order.');
@@ -244,18 +247,18 @@ exports.securePlaceOrder = https.onCall(async (request) => {
     }
     const db = admin.firestore();
     const rtdb = admin.database();
-    // 1. Verify Admin is Online (Kill-Switch)
-    const systemStatusSnap = await rtdb.ref('system_status/admin_online').once('value');
-    const isAdminOnline = systemStatusSnap.val();
-    if (!isAdminOnline) {
-        throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
-    }
-    // Generate unique order ID early (RTDB push key style)
-    const orderId = rtdb.ref('active_orders').push().key;
-    // Get order counter for today
-    const today = new Date().toISOString().split('T')[0];
-    const dailyCounterRef = db.doc(`orderCounters/${today}`);
     try {
+        // 1. Verify Admin is Online (Kill-Switch)
+        const systemStatusSnap = await rtdb.ref('system_status/admin_online').once('value');
+        const isAdminOnline = systemStatusSnap.val();
+        if (isAdminOnline === false) {
+            throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
+        }
+        // Generate unique order ID early (RTDB push key style)
+        const orderId = rtdb.ref('active_orders').push().key;
+        // Get order counter for today
+        const today = new Date().toISOString().split('T')[0];
+        const dailyCounterRef = db.doc(`orderCounters/${today}`);
         const result = await db.runTransaction(async (transaction) => {
             var _a, _b;
             // 2. Load User and Student records
@@ -296,7 +299,7 @@ exports.securePlaceOrder = https.onCall(async (request) => {
             // If RTDB fails, we revert Firestore. This is cross-DB pseudo-transaction.
             // A better way is using Admin SDK to check stock via RTDB transaction FIRST.
             // Wait, let's do RTDB transaction inside Firestore transaction? It's async. We can!
-            return { userSnap, studentRef, studentData, dailyCounterRef, orderNumber, counterSnap };
+            return { userSnap, studentRef, studentData, dailyCounterRef, orderNumber, counterExists: counterSnap.exists };
         });
         // 4. Perform RTDB Stock checks and deductions atomically for ALL items
         // Using multi-path update to decrement stock IF stock is sufficient.
@@ -355,7 +358,7 @@ exports.securePlaceOrder = https.onCall(async (request) => {
                 transaction.update(result.studentRef, { balance: newBal, credits: newCred });
                 transaction.update(db.collection('users').doc(auth.uid), { walletBalance: newBal });
             }
-            if (result.counterSnap.exists) {
+            if (result.counterExists) {
                 transaction.update(result.dailyCounterRef, { count: result.orderNumber });
             }
             else {
@@ -383,18 +386,44 @@ exports.securePlaceOrder = https.onCall(async (request) => {
             totalPrice,
             slotName,
             payment_mode: paymentMode,
-            status: 'pending',
+            status: 'ordered',
             sync_status: 'cloud',
             estimatedServingWindow,
-            createdAt: nowTimestamp,
+            createdAt: new Date().toISOString(),
             timestamp: admin.database.ServerValue.TIMESTAMP
         };
         await rtdb.ref(`active_orders/${orderId}`).set(newOrder);
         return { success: true, orderId, orderNumber: result.orderNumber, estimatedServingWindow };
     }
     catch (error) {
-        functions.logger.error('securePlaceOrder failed', error);
-        throw new https.HttpsError('internal', error.message || 'Transaction failed');
+        functions.logger.error('securePlaceOrder failed', JSON.stringify({
+            message: error === null || error === void 0 ? void 0 : error.message,
+            code: error === null || error === void 0 ? void 0 : error.code,
+            details: error === null || error === void 0 ? void 0 : error.details,
+            httpErrorCode: error === null || error === void 0 ? void 0 : error.httpErrorCode,
+            stack: (_a = error === null || error === void 0 ? void 0 : error.stack) === null || _a === void 0 ? void 0 : _a.substring(0, 500),
+        }));
+        // HttpsError thrown inside db.runTransaction gets wrapped by Firestore.
+        // Check for it directly first, then look for wrapped message patterns.
+        if (error instanceof https.HttpsError) {
+            throw error;
+        }
+        // Firestore wraps thrown errors — try to extract meaningful message
+        const msg = (error === null || error === void 0 ? void 0 : error.message) || 'Transaction failed';
+        // Map common Firestore/RTDB error messages back to useful codes
+        if (msg.includes('Insufficient wallet balance')) {
+            throw new https.HttpsError('resource-exhausted', msg);
+        }
+        if (msg.includes('Student record not found') || msg.includes('User profile not found')) {
+            throw new https.HttpsError('not-found', msg);
+        }
+        if (msg.includes('registered student') || msg.includes('disabled') || msg.includes('Admin is offline')) {
+            throw new https.HttpsError('failed-precondition', msg);
+        }
+        if (msg.includes('Out of stock')) {
+            throw new https.HttpsError('resource-exhausted', msg);
+        }
+        throw new https.HttpsError('internal', msg);
     }
 });
 //# sourceMappingURL=index.js.map

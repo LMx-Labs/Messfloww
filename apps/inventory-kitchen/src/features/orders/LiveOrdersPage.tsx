@@ -1,15 +1,13 @@
-import { Check, Download, PackageOpen, Printer, Calendar, Trash2 } from "lucide-react";
+import { Check, Download, PackageOpen, Printer, Calendar } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { ref, get, remove } from "firebase/database";
 import { 
   rtdb, 
   orderService, 
-  studentService, 
   timeSlotService, 
   fetchSettings, 
   printReceipt, 
   mapOrderToBill, 
-  Student, 
   Order,
   TimeSlot
 } from "@messflow/shared-core";
@@ -17,19 +15,16 @@ import { toast } from "sonner";
 
 export function LiveOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [settings, setSettings] = useState<any>(null);
   
   useEffect(() => {
     const unsubOrders = orderService.subscribeActiveOrders(setOrders);
-    const unsubStudents = studentService.subscribeStudents(setStudents);
     const unsubSlots = timeSlotService.subscribeToTimeSlots(setTimeSlots);
     fetchSettings().then(setSettings);
     
     return () => {
       unsubOrders();
-      unsubStudents();
       unsubSlots();
     };
   }, []);
@@ -51,26 +46,27 @@ export function LiveOrdersPage() {
 
   // Order of slots to display
   const orderedSlotNames = useMemo(() => {
-    const names = timeSlots.map(s => s.name);
-    // Add "Unscheduled" if there are orders in it
-    if (groupedOrders["Unscheduled"]) {
-      names.push("Unscheduled");
-    }
-    return names;
+    const configNames = timeSlots.map(s => s.name);
+    const activeSlotNames = Object.keys(groupedOrders);
+    
+    // Combine config names with any dynamic names found in orders (preserving config order)
+    const combined = [...configNames];
+    activeSlotNames.forEach(name => {
+      if (!combined.includes(name)) {
+        combined.push(name);
+      }
+    });
+    
+    return combined;
   }, [timeSlots, groupedOrders]);
 
   const handlePrint = async (order: any) => {
-    let student: Student | undefined;
-    if (!order.isExternal && order.userRollNo) {
-      student = students.find(s => s.regNo.trim().toUpperCase() === order.userRollNo.trim().toUpperCase());
-    }
-    
     await orderService.updateOrderStatus(order.id, 'status', 'completed');
     
     // Attempt dual print (Bill + KOT)
     // LiveOrdersPage doesn't inject useMenu yet, but it might not explicitly need categories if we pass an empty array, 
     // it defaults to 'UNCATEGORIZED'. For now, let's just print receipt.
-    printReceipt(mapOrderToBill(order, student), settings);
+    printReceipt(mapOrderToBill(order, undefined), settings);
   };
   
   const downloadLiveOrdersReport = () => {
@@ -95,27 +91,6 @@ export function LiveOrdersPage() {
     day: 'numeric' 
   });
   
-  const clearTestOrders = async () => {
-    try {
-      const activeOrdersRef = ref(rtdb, "active_orders");
-      const snapshot = await get(activeOrdersRef);
-      if (snapshot.exists()) {
-        const updates: Promise<void>[] = [];
-        snapshot.forEach((child) => {
-          const order = child.val();
-          if (child.key?.startsWith("TEST-") || order.userId === "test-user") {
-            updates.push(remove(ref(rtdb, `active_orders/${child.key}`)));
-          }
-        });
-        await Promise.all(updates);
-        toast.success("Test orders cleared successfully");
-      }
-    } catch (error) {
-      console.error("Failed to clear test orders:", error);
-      toast.error("Failed to clear test orders");
-    }
-  };
-  
   return (
     <div className="space-y-6 print:hidden">
       <div className="flex items-center justify-between">
@@ -124,9 +99,6 @@ export function LiveOrdersPage() {
           <p className="text-muted-foreground">Monitoring {activeOrders.length} active orders</p>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={clearTestOrders} className="bg-red-500/10 hover:bg-red-500/20 text-red-500 px-4 py-3 rounded-xl font-semibold flex items-center gap-2 transition-colors">
-            <Trash2 className="h-5 w-5" /> Clear Test Orders
-          </button>
           <button onClick={downloadLiveOrdersReport} className="bg-primary hover:bg-secondary text-primary-foreground px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-colors">
             <Download className="h-5 w-5" /> Download Report
           </button>

@@ -32,7 +32,7 @@ export function CartScreen() {
   useEffect(() => {
     const adminOnlineRef = ref(rtdb, "system_status/admin_online");
     const unsubscribe = onValue(adminOnlineRef, (snap) => {
-      setIsAdminOnline(snap.val() === true);
+      setIsAdminOnline(snap.val() !== false);
     });
     return () => unsubscribe();
   }, []);
@@ -152,7 +152,14 @@ export function CartScreen() {
       navigate("/order-success", { state: { orderId: id, orderNumber, estimatedServingWindow, cart, totalPrice }, replace: true });
     } catch (error: any) {
       console.error("Order submission failed:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to place order. Please try again.";
+      
+      let errorMessage = error?.details?.message || error?.message || "Failed to place order. Please try again.";
+      
+      // Specifically handle 429 Too Many Requests (sometimes returned as internal by SDK if network fails)
+      if (errorMessage.toLowerCase().includes("too many requests") || errorMessage.includes("429")) {
+        errorMessage = "Please wait a moment before trying again.";
+      }
+      
       toast.error(errorMessage);
     } finally {
       setIsSubmitting(false);

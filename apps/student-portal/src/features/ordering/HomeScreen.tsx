@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
-import { Wallet, User, Zap, Package, Coffee, Info, X, RotateCcw, AlertTriangle, History, Calendar, ChevronRight } from "lucide-react";
+import { Wallet, User, Zap, Package, Coffee, Info, X, RotateCcw, AlertTriangle } from "lucide-react";
 import { MenuItem } from "../../features/ordering/MenuItem";
 import { CartPreview } from "../../features/ordering/CartPreview";
 import { InstallPromptBanner } from "../../core/layout/InstallPromptBanner";
@@ -23,9 +23,6 @@ export function HomeScreen() {
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [cart, setCart] = useState<{ id: number; name: string; price: number; qty: number }[]>([]);
   const [activeOrder, setActiveOrder] = useState<OrderDoc | null>(null);
-  const [recentOrders, setRecentOrders] = useState<OrderDoc[]>([]);
-  const [ordersLoading, setOrdersLoading] = useState(true);
-  const [ordersError, setOrdersError] = useState<string | null>(null);
   const [messStatus, setMessStatus] = useState<MessStatus>({ isOpen: false, currentlyServing: 0 });
   const [activeSlot, setActiveSlot] = useState<MealSlot | null>(null);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
@@ -191,20 +188,6 @@ export function HomeScreen() {
     return () => { if (unsubscribe) unsubscribe(); };
   }, [user]);
 
-  // Fetch Recent Orders (Limited to 3)
-  useEffect(() => {
-    if (!user) return;
-    setOrdersLoading(true);
-    setOrdersError(null);
-    orderService.getOrderHistory(user.uid, null, 3)
-      .then(({ orders }) => setRecentOrders(orders))
-      .catch((err) => {
-        console.error("Recent orders fetch failed:", err);
-        setOrdersError(err.message || "Failed to load orders");
-      })
-      .finally(() => setOrdersLoading(false));
-  }, [user, activeOrder]); // Refresh if active order status changes
-
   // Listen to Global Mess Status
   useEffect(() => {
     const unsubscribe = messStatusService.subscribeToMessStatus((status) => {
@@ -369,83 +352,6 @@ export function HomeScreen() {
             <div>
               <p className="text-red-500 text-sm font-bold">Slot Sync Issue Detected</p>
               <p className="text-red-500/70 text-xs">Mess is open but no server slot is active. Tap "Sync Menu" to retry.</p>
-            </div>
-          </div>
-        )}
-
-        {/* Recent Orders Section */}
-        {userProfile && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <History className="w-5 h-5 text-[#FFD54F]" />
-                <h3 className="text-lg text-white font-bold">Recent Orders</h3>
-              </div>
-              <button 
-                onClick={() => navigate("/order-history")}
-                className="text-[#FFD54F] text-xs font-bold uppercase tracking-wider hover:opacity-80 transition-opacity"
-              >
-                View All
-              </button>
-            </div>
-            
-            <div className="grid grid-cols-1 gap-3">
-              {ordersLoading ? (
-                <div className="flex justify-center py-4">
-                  <div className="w-6 h-6 border-2 border-[#FFD54F] border-t-transparent rounded-full animate-spin" />
-                </div>
-              ) : ordersError ? (
-                <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-center">
-                  <p className="text-red-500 text-xs font-bold">Unable to fetch recent orders</p>
-                  <p className="text-red-500/70 text-[9px] mt-1">Please check your connection or try again later.</p>
-                </div>
-              ) : recentOrders.length === 0 ? (
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
-                  <p className="text-gray-500 text-sm">No recent orders found</p>
-                </div>
-              ) : (
-                recentOrders.map((order, idx) => (
-                  <motion.div
-                    key={order.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: idx * 0.1 }}
-                    onClick={() => navigate(`/order-tracking/${order.id}`)}
-                    className="bg-[#1E2A38] p-4 rounded-2xl border border-white/5 flex items-center justify-between group active:scale-[0.98] transition-all cursor-pointer hover:border-white/20"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-[#121212] rounded-xl flex items-center justify-center text-[#FFD54F] font-bold text-xs border border-white/5">
-                        #{order.orderNumber}
-                      </div>
-                      <div>
-                        <p className="text-white text-sm font-medium line-clamp-1">
-                          {order.items[0]?.name}{order.items.length > 1 ? ` +${order.items.length - 1}` : ''}
-                        </p>
-                        <p className="text-gray-500 text-[10px] flex items-center gap-1 mt-0.5">
-                          <Calendar className="w-3 h-3" />
-                          {new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} • {order.slotName}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <p className="text-white text-sm font-bold">₹{order.totalPrice}</p>
-                        <p className={`text-[9px] uppercase font-black tracking-widest mt-0.5 ${
-                          order.status === 'ordered' ? 'text-amber-500' : 
-                          order.status === 'preparing' ? 'text-indigo-400' : 
-                          order.status === 'ready' ? 'text-[#10B981]' : 
-                          order.status === 'completed' ? 'text-[#10B981]' : 
-                          order.status === 'cancelled' ? 'text-red-500' : 
-                          order.status === 'expired' ? 'text-gray-500' : 'text-gray-400'
-                        }`}>
-                          {order.status === 'ordered' ? 'order placed' : order.status}
-                        </p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors" />
-                    </div>
-                  </motion.div>
-                ))
-              )}
             </div>
           </div>
         )}

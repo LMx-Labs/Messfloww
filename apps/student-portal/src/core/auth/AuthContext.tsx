@@ -50,6 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const registrationListenerRef = useRef<(() => void) | null>(null);
   const statusListenerRef = useRef<(() => void) | null>(null);
+  const sessionListenerRef = useRef<(() => void) | null>(null);
 
   // Cold Start: Try to load from cache immediately
   useEffect(() => {
@@ -88,7 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Set Session ID to RTDB for immediate presence / lockout listening
-    await claimSession(currentUser.uid);
+    // Moved to onAuthStateChanged to ensure it happens before watcher is started
 
     const userDocRef = doc(db, "users", currentUser.uid);
     const existingSnap = await getDoc(userDocRef);
@@ -146,7 +147,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      // Cleanup any previous registration watcher
       if (registrationListenerRef.current) {
         registrationListenerRef.current();
         registrationListenerRef.current = null;
@@ -155,16 +155,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         statusListenerRef.current();
         statusListenerRef.current = null;
       }
+      if (sessionListenerRef.current) {
+        sessionListenerRef.current();
+        sessionListenerRef.current = null;
+      }
 
       setUser(currentUser);
       
       if (currentUser) {
         try {
-          watchSessionCollision(currentUser.uid, () => {
-            toast.error("Security Alert: Logged in from another device.");
-            firebaseSignOut(auth);
-          });
-
           const email = currentUser.email?.toLowerCase().trim();
           if (!email) {
             await firebaseSignOut(auth);
@@ -186,6 +185,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
 
           setUser(currentUser);
+
+          // Claim session and start watching for collisions
+          await claimSession(currentUser.uid);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          sessionListenerRef.current = watchSessionCollision(currentUser.uid, () => {
+            toast.error("Security Alert: Logged in from another device.");
+            firebaseSignOut(auth);
+          });
 
           // Fetch the user's profile document
           const userDocRef = doc(db, "users", currentUser.uid);
@@ -296,6 +303,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (statusListenerRef.current) {
         statusListenerRef.current();
         statusListenerRef.current = null;
+      }
+      if (sessionListenerRef.current) {
+        sessionListenerRef.current();
+        sessionListenerRef.current = null;
       }
     };
   }, [buildRegisteredProfile, startStatusWatcher]);
