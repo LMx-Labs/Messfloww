@@ -17,9 +17,7 @@ export function UpiPendingScreen() {
   const [order, setOrder] = useState<OrderDoc | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
-  // The QR is static for the session, capturing the moment of order placement.
-  const [fixedTime] = useState(Date.now());
-  const qrCodeValue = generateQRCodeValue(orderId, fixedTime);
+  const qrCodeValue = generateQRCodeValue(orderId);
 
   useEffect(() => {
     if (!orderId) return;

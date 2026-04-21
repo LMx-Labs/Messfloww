@@ -11,7 +11,7 @@ export function generateOrderID(userId: string): string {
 /**
  * Generate a QR code value - Now just the raw order ID
  */
-export function generateQRCodeValue(orderId: string, timestamp?: number): string {
+export function generateQRCodeValue(orderId: string): string {
   return orderId;
 }
 

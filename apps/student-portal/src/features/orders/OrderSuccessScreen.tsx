@@ -19,8 +19,7 @@ export function OrderSuccessScreen() {
 
   // The QR is static for the session, capturing the moment of order placement.
   // It is validated strictly by the one-time `qrUsed` flag in the DB.
-  const [fixedTime] = useState(Date.now());
-  const qrCodeValue = generateQRCodeValue(orderId, fixedTime);
+  const qrCodeValue = generateQRCodeValue(orderId);
 
   useEffect(() => {
     if (!orderId) return;

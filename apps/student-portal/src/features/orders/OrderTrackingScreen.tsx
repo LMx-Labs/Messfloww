@@ -77,7 +77,7 @@ export function OrderTrackingScreen() {
   if (order.status === "collected" || order.status === "completed" || order.qrUsed) currentStageIdx = 3;
 
   const isCollected = currentStageIdx === 3;
-  const qrCodeValue = generateQRCodeValue(order.id, new Date(order.createdAt).getTime());
+  const qrCodeValue = generateQRCodeValue(order.id);
 
   return (
     <div className="min-h-screen bg-[#121212] flex flex-col">
