@@ -1,14 +1,16 @@
 import { useState } from "react";
-import { ScanBarcode, UserCheck, ShoppingBag } from "lucide-react";
+import { ScanBarcode, UserCheck, ShoppingBag, Store } from "lucide-react";
 import { BarcodeScanPage } from "../../features/scan/BarcodeScanPage";
 import { CounterOrderPage } from "../../features/counter/CounterOrderPage";
 import { ExternalOrderPage } from "../../features/external/ExternalOrderPage";
+import { ShopOrderPage } from "../../features/shop/ShopOrderPage";
 
-type TabKey = "scan" | "counter" | "external";
+type TabKey = "scan" | "counter" | "shop" | "external";
 
 const tabs: { key: TabKey; label: string; icon: typeof ScanBarcode }[] = [
   { key: "scan", label: "QR Scan", icon: ScanBarcode },
   { key: "counter", label: "Internal", icon: UserCheck },
+  { key: "shop", label: "Shop", icon: Store },
   { key: "external", label: "External", icon: ShoppingBag },
 ];
 
@@ -51,6 +53,7 @@ export function KioskLayout() {
       <main className="flex-1 overflow-auto p-6">
         {activeTab === "scan" && <BarcodeScanPage />}
         {activeTab === "counter" && <CounterOrderPage />}
+        {activeTab === "shop" && <ShopOrderPage />}
         {activeTab === "external" && <ExternalOrderPage />}
       </main>
     </div>
