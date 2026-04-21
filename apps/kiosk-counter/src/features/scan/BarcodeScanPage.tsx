@@ -335,7 +335,6 @@ export function BarcodeScanPage() {
         </div>
       ) : (
         <div className="space-y-6 max-w-3xl mx-auto">
-        <div className="space-y-6 max-w-3xl mx-auto">
           {/* Payment Verification Modal */}
           {scannedOrder.needsPaymentConfirmation && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
