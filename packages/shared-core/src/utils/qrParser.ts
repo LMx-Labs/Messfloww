@@ -1,9 +1,18 @@
 /**
- * Generate a complex QR code value with order ID and timestamp
- * Format: MESSFLOWW|ID:<orderId>|TS:<timestamp>
+ * Generate a standard Order ID
+ * Format: MFW-[UnixTimestamp]-[UserShortUID]
  */
-export function generateQRCodeValue(orderId: string, timestamp: number): string {
-  return `MESSFLOWW|ID:${orderId}|TS:${timestamp}`;
+export function generateOrderID(userId: string): string {
+  const ts = Math.floor(Date.now() / 1000);
+  const shortUid = userId.length >= 4 ? userId.slice(-4).toUpperCase() : userId.padEnd(4, '0').toUpperCase();
+  return `MFW-${ts}-${shortUid}`;
+}
+
+/**
+ * Generate a QR code value - Now just the raw order ID
+ */
+export function generateQRCodeValue(orderId: string, timestamp?: number): string {
+  return orderId;
 }
 
 /**
@@ -15,6 +24,7 @@ export function parseQRCodeValue(qrValue: string): {
   ts?: number;
 } | null {
   try {
+    // Handle old format for backward compatibility
     if (qrValue.startsWith('MESSFLOWW|')) {
       const parts = qrValue.split('|');
       let orderId = "";
@@ -32,7 +42,7 @@ export function parseQRCodeValue(qrValue: string): {
       }
     }
     
-    // Otherwise, assume it's simply the order ID
+    // Otherwise, assume it's simply the raw order ID
     return { orderId: qrValue };
   } catch (error) {
     return { orderId: qrValue }; // Safe fallback

@@ -45,7 +45,8 @@ export const orderService = {
       throw new Error(`Failed to place order: Items out of stock (${result.failedItem})`);
     }
 
-    const orderId = `UPI-${Date.now().toString().slice(-6)}`;
+    const { generateOrderID } = await import("@messflow/shared-core");
+    const orderId = generateOrderID(userId);
     const orderNumber = Date.now() % 1000;
     
     const newOrder = {

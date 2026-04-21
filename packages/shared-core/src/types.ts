@@ -24,6 +24,7 @@ export interface UserProfile {
   status: "active" | "disabled" | "pending";
   photoURL?: string;
   activeSessionId?: string;
+  isExternal?: boolean;
 }
 
 // ── Payment ──

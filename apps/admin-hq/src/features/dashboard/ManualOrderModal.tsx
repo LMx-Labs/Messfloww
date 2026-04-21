@@ -79,7 +79,8 @@ export function ManualOrderModal({ isOpen, onClose }: ManualOrderModalProps) {
     setIsProcessing(true);
     
     try {
-      const orderId = `MAN-${Date.now().toString().slice(-6)}`;
+      const { generateOrderID } = await import("@messflow/shared-core");
+      const orderId = generateOrderID("EXTERNAL");
       const orderNumber = Date.now() % 1000;
       
       const newOrder = {

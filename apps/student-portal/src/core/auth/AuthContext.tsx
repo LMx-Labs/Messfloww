@@ -19,6 +19,7 @@ export interface UserProfile {
   photoURL?: string;
   activeSessionId?: string;
   isEnrolled: boolean;
+  isExternal?: boolean;
 }
 
 // Generate or retrieve a unique ID for this browser instance
@@ -175,16 +176,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
-          // --- Domain Restriction ---
+          // --- Domain Handling ---
           const VIT_EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@vitstudent\.ac\.in$/;
           const isVITEmail = VIT_EMAIL_REGEX.test(email);
-          
-          if (!isVITEmail) {
-            console.error("Unauthorized Domain Access Blocked:", email);
-            toast.error("Access restricted to @vitstudent.ac.in accounts.");
-            await firebaseSignOut(auth);
-            setUser(null);
-            setUserProfile(null);
+          const isExternal = !isVITEmail;
+
+          // If external user, create/set an external profile immediately
+          if (isExternal) {
+            const externalProfile: UserProfile = {
+              uid: currentUser.uid,
+              email: email,
+              name: currentUser.displayName || "External User",
+              rollNo: "EXTERNAL",
+              walletBalance: 0,
+              isRegistered: true, // Let them pass the CartScreen check
+              status: "active",
+              photoURL: currentUser.photoURL || undefined,
+              createdAt: new Date().toISOString(),
+              isEnrolled: false,
+              isExternal: true
+            };
+            const userDocRef = doc(db, "users", currentUser.uid);
+            await setDoc(userDocRef, externalProfile);
+            setUserProfile(externalProfile);
             setLoading(false);
             return;
           }

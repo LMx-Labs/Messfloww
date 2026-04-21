@@ -251,8 +251,10 @@ export const securePlaceOrder = https.onCall(async (request: https.CallableReque
       throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
     }
 
-    // Generate unique order ID early (RTDB push key style)
-    const orderId = rtdb.ref('active_orders').push().key as string;
+    // Generate standard order ID
+    const ts = Math.floor(Date.now() / 1000);
+    const shortUid = auth.uid.length >= 4 ? auth.uid.slice(-4).toUpperCase() : auth.uid.padEnd(4, '0').toUpperCase();
+    const orderId = `MFW-${ts}-${shortUid}`;
     // Get order counter for today
     const today = new Date().toISOString().split('T')[0];
     const dailyCounterRef = db.doc(`orderCounters/${today}`);
