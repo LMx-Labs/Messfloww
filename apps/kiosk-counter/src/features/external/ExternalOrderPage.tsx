@@ -130,6 +130,10 @@ export function ExternalOrderPage() {
       toast.error("Some items are out of stock.");
       return;
     }
+    if (counters.length === 0) {
+      toast.warning('Counter config not loaded yet. Please wait a moment.');
+      return;
+    }
 
     const orderId = `EXT-${Date.now().toString().slice(-6)}`;
     const newOrder: Order = {
@@ -139,6 +143,7 @@ export function ExternalOrderPage() {
       items: cart.map((i: CartItem) => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity })),
       totalPrice: total,
       status: "processing", // External orders go straight to kitchen
+      paymentStatus: 'PAID',
       payment_mode: paymentMode,
       slotName: activeSlotKey,
       slotTime: "N/A",

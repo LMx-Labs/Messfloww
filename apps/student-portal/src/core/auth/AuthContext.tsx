@@ -176,7 +176,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
 
           // --- Domain Restriction ---
-          const isVITEmail = email.endsWith("@vitstudent.ac.in");
+          const VIT_EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@vitstudent\.ac\.in$/;
+          const isVITEmail = VIT_EMAIL_REGEX.test(email);
           
           if (!isVITEmail) {
             console.error("Unauthorized Domain Access Blocked:", email);

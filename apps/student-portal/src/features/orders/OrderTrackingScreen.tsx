@@ -1,12 +1,11 @@
 import QRCode from "react-qr-code";
-import { generateQRCodeValue } from "../../shared/utils/qrGenerator";
+import { generateQRCodeValue } from "@messflow/shared-core";
 import { useAuth } from "../../core/auth/AuthContext";
 import { orderService, OrderDoc } from "../../features/orders/orderService";
 import { useEffect, useState } from "react";
 import { Loader2, ArrowLeft, Clock, MapPin, CheckCircle2, ChefHat, ScanBarcode, PackageCheck } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
-// @ts-expect-error Types missing
 import confetti from "canvas-confetti";
 
 const STAGES = [
@@ -134,8 +133,8 @@ export function OrderTrackingScreen() {
                       </h4>
                       {isActive && (
                         <motion.p 
-                          initial={{ opacity: 0, h: 0 }}
-                          animate={{ opacity: 1, h: "auto" }}
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
                           className="text-[#FFD54F] text-[10px] uppercase font-bold tracking-widest mt-1 animate-pulse"
                         >
                           Current Phase

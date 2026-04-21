@@ -61,8 +61,18 @@ export const printReceipt = (data: BillDocument | BillDocument[], settings?: Rec
         <style>
           ${styles}
           @media print {
-            body { margin: 0; padding: 0; }
+            @page { size: 80mm auto; margin: 0; }
+            body { 
+              margin: 0; padding: 0; width: 80mm;
+              font-family: 'Courier New', monospace;
+              font-size: 11px; line-height: 1.4; color: #000; background: #fff;
+            }
             .thermal-receipt-wrapper { display: block !important; visibility: visible !important; }
+            .receipt-header { text-align: center; font-weight: bold; font-size: 13px; }
+            .receipt-row { display: flex; justify-content: space-between; }
+            .receipt-divider { border-top: 1px dashed #000; margin: 4px 0; }
+            .receipt-total { font-weight: bold; font-size: 14px; border-top: 2px solid #000; padding-top: 4px; }
+            .kot-header { text-align: center; font-size: 16px; font-weight: bold; text-transform: uppercase; }
           }
         </style>
       </head>

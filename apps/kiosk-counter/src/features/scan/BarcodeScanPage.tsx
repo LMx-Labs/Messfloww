@@ -227,12 +227,33 @@ export function BarcodeScanPage() {
     }
   };
 
-  // Auto-focus the input on mount and when returning to scan mode
+  const bufferRef = useRef('');
+  const bufferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Global HID scanner listener + auto-focus fallback
   useEffect(() => {
-    if (!scannedOrder && inputRef.current) {
+    if (scannedOrder) return;
+    
+    if (inputRef.current) {
       inputRef.current.focus();
     }
-  }, [scannedOrder]);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        const val = bufferRef.current.trim();
+        bufferRef.current = '';
+        if (bufferTimerRef.current) clearTimeout(bufferTimerRef.current);
+        if (val) handleScan(val);
+      } else if (e.key.length === 1) {
+        bufferRef.current += e.key;
+        if (bufferTimerRef.current) clearTimeout(bufferTimerRef.current);
+        bufferTimerRef.current = setTimeout(() => { bufferRef.current = ''; }, 100);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [scannedOrder, handleScan]);
 
   const handlePrintReceipt = () => {
     if (scannedOrder) printReceipt(mapOrderToBill(scannedOrder), settings);

@@ -149,6 +149,12 @@ export function CartScreen() {
     }
 
     // Now we already set isSubmitting earlier
+    if (selectedPayment === 'credits' && !isEnrolled) {
+      toast.error('Credits are only available for enrolled Night Mess students.');
+      setIsSubmitting(false);
+      return;
+    }
+
     if (selectedPayment === 'credits') {
       try {
         const { id, orderNumber, estimatedServingWindow } = await orderService.placeOrder(

@@ -23,6 +23,19 @@ export function KitchenDisplayPage() {
   const allMenuItems = Object.values(menu).flat();
   
   const routedOrders = useRef<Set<string>>(new Set());
+  const autoPrintedOrders = useRef<Set<string>>(new Set());
+
+  const [autoPrint, setAutoPrint] = useState<boolean>(() => {
+    return localStorage.getItem('kds_autoPrint') !== 'false'; // default: ON
+  });
+
+  const toggleAutoPrint = () => {
+    setAutoPrint(prev => {
+      const next = !prev;
+      localStorage.setItem('kds_autoPrint', String(next));
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetchSettings().then(setSettings);
@@ -44,6 +57,14 @@ export function KitchenDisplayPage() {
           kotQueueService.routeOrderToCounters(order, counters, allMenuItems);
         });
       }
+      if (autoPrint) {
+        newOrders
+          .filter(o => o.autoPrint && !autoPrintedOrders.current.has(o.id))
+          .forEach(order => {
+            autoPrintedOrders.current.add(order.id);
+            printReceipt(mapOrderToKOTs(order as any, allMenuItems), settings);
+          });
+      }
       
       setOrders(newOrders);
       setLoading(false);
@@ -54,7 +75,7 @@ export function KitchenDisplayPage() {
       ordersUnsub();
       unsubMenu();
     };
-  }, [counters.length, allMenuItems.length]);
+  }, [counters.length, allMenuItems.length, autoPrint, settings]);
 
   const markAsReady = async (orderId: string, orderNumber: number) => {
     try {
@@ -79,9 +100,23 @@ export function KitchenDisplayPage() {
             <p className="text-muted-foreground">Manage incoming orders and auto-print KOTs</p>
           </div>
         </div>
-        <button onClick={() => window.open("/kot-control", "_self")} className="flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-xl font-bold transition-all shadow-sm">
-          <Printer className="w-5 h-5" /> KOT Control Center
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            id="kds-auto-print-toggle"
+            onClick={toggleAutoPrint}
+            className={`flex items-center gap-2 px-4 py-3 rounded-xl font-bold text-sm transition-all border-2 ${
+              autoPrint
+                ? 'bg-accent/20 border-accent text-accent'
+                : 'bg-muted border-border text-muted-foreground'
+            }`}
+          >
+            <Printer className="w-4 h-4" />
+            Auto-Print: {autoPrint ? 'ON' : 'OFF'}
+          </button>
+          <button onClick={() => window.open("/kot-control", "_self")} className="flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-xl font-bold transition-all shadow-sm">
+            <Printer className="w-5 h-5" /> KOT Control Center
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

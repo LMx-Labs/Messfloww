@@ -3,10 +3,9 @@ import { useNavigate, useLocation } from "react-router";
 import { motion } from "motion/react";
 import { CheckCircle2, Clock, MapPin, ChevronRight } from "lucide-react";
 import QRCode from "react-qr-code";
-import { generateQRCodeValue } from "../../shared/utils/qrGenerator";
+import { generateQRCodeValue } from "@messflow/shared-core";
 import { useAuth } from "../../core/auth/AuthContext";
 import { orderService, OrderDoc } from "../../features/orders/orderService";
-// @ts-expect-error Types are not properly resolving for canvas-confetti
 import confetti from "canvas-confetti";
 
 export function OrderSuccessScreen() {

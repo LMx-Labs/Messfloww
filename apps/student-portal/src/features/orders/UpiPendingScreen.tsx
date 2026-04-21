@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router";
 import { motion } from "motion/react";
 import { Clock, MapPin, ChevronRight, Ban, Loader2 } from "lucide-react";
 import QRCode from "react-qr-code";
-import { generateQRCodeValue } from "../../shared/utils/qrGenerator";
+import { generateQRCodeValue } from "@messflow/shared-core";
 import { orderService, OrderDoc } from "../../features/orders/orderService";
 import { rtdb } from "@messflow/shared-core";
 import { ref, remove, runTransaction } from "firebase/database";

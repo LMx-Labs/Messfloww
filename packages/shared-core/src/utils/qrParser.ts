@@ -1,4 +1,12 @@
 /**
+ * Generate a complex QR code value with order ID and timestamp
+ * Format: MESSFLOWW|ID:<orderId>|TS:<timestamp>
+ */
+export function generateQRCodeValue(orderId: string, timestamp: number): string {
+  return `MESSFLOWW|ID:${orderId}|TS:${timestamp}`;
+}
+
+/**
  * Simplified QR code parser:
  */
 export function parseQRCodeValue(qrValue: string): {
