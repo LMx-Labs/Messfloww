@@ -3,6 +3,7 @@ import { LoginScreen } from "../auth/LoginScreen";
 import { HomeScreen } from "../../features/ordering/HomeScreen";
 import { CartScreen } from "../../features/ordering/CartScreen";
 import { OrderSuccessScreen } from "../../features/orders/OrderSuccessScreen";
+import { UpiPendingScreen } from "../../features/orders/UpiPendingScreen";
 import { OrderTrackingScreen } from "../../features/orders/OrderTrackingScreen";
 import { ProfileScreen } from "../../features/profile/ProfileScreen";
 import { OrderHistoryScreen } from "../../features/orders/OrderHistoryScreen";
@@ -26,6 +27,10 @@ export const router = createBrowserRouter([
   {
     path: "/order-success",
     element: <ProtectedRoute><ErrorBoundary featureName="Order Success"><OrderSuccessScreen /></ErrorBoundary></ProtectedRoute>,
+  },
+  {
+    path: "/upi-pending",
+    element: <ProtectedRoute><ErrorBoundary featureName="UPI Pending"><UpiPendingScreen /></ErrorBoundary></ProtectedRoute>,
   },
   {
     path: "/order-tracking/:orderId",

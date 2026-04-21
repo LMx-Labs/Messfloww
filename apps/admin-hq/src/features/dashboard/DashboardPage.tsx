@@ -1,9 +1,9 @@
 import { ShoppingCart, Users, DollarSign, TrendingUp, Download } from "lucide-react";
 import { Link } from "react-router";
-import { useMemo, useState, useEffect } from "react";
 import { db, rtdb, orderService, timeSlotService } from "@messflow/shared-core";
 import { Order, TimeSlot } from "@messflow/shared-core";
 import { fetchAllStudents } from "../../features/students/studentService";
+import { ManualOrderModal } from "./ManualOrderModal";
 
 export function DashboardPage() {
   const [activeOrders, setActiveOrders] = useState<Order[]>([]);
@@ -11,6 +11,7 @@ export function DashboardPage() {
   const [activeStudentsCount, setActiveStudentsCount] = useState<number>(0);
   const [activeSlot, setActiveSlot] = useState<TimeSlot | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
 
   // 1. Subscribe to Active Orders (Core)
   useEffect(() => {
@@ -124,13 +125,22 @@ export function DashboardPage() {
           <h1 className="text-3xl font-bold text-foreground mb-2">Dashboard</h1>
           <p className="text-muted-foreground">Welcome back! Here's what's happening today.</p>
         </div>
-        <button
-          onClick={downloadDashboardReport}
-          className="bg-primary hover:bg-secondary text-primary-foreground px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-colors"
-        >
-          <Download className="h-5 w-5" />
-          Download Report
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsManualModalOpen(true)}
+            className="bg-accent hover:bg-accent/80 text-accent-foreground px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-accent/20"
+          >
+            <ShoppingCart className="h-5 w-5" />
+            Manual Order
+          </button>
+          <button
+            onClick={downloadDashboardReport}
+            className="bg-primary hover:bg-secondary text-primary-foreground px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-colors"
+          >
+            <Download className="h-5 w-5" />
+            Download Report
+          </button>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -158,7 +168,7 @@ export function DashboardPage() {
         </p>
       </div>
 
-
+      <ManualOrderModal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} />
     </div>
   );
 }

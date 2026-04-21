@@ -63,9 +63,10 @@ export function LoginScreen() {
           className="bg-[#1E2A38]/80 backdrop-blur-sm rounded-3xl p-10 shadow-2xl border border-white/5 text-center"
         >
           <h2 className="text-white text-xl font-medium mb-6">Student Login</h2>
-          <p className="text-gray-400 text-sm mb-10 leading-relaxed">
-            Sign in with your college Google account to access your wallet and order meals.
+          <p className="text-gray-400 text-sm mb-6 leading-relaxed">
+            Use your @vitstudent.ac.in college account to access Night Mess.
           </p>
+
 
           <motion.button
             whileTap={{ scale: 0.98 }}

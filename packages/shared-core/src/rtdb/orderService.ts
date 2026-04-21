@@ -64,6 +64,19 @@ export const orderService = {
     return orderData.id;
   },
 
+  async confirmUpiPayment(orderId: string): Promise<void> {
+    const orderRef = ref(rtdb, `active_orders/${orderId}`);
+    await runTransaction(orderRef, (data) => {
+      if (!data) return data;
+      if (data.paymentStatus === 'PENDING') {
+        data.paymentStatus = 'PAID';
+        data.paidAt = new Date().toISOString();
+        return data;
+      }
+      return; // abort if not pending
+    });
+  },
+
   async atomicCollectOrder(orderId: string) {
     const orderRef = ref(rtdb, `active_orders/${orderId}`);
     const result = await runTransaction(orderRef, (orderData) => {
@@ -72,6 +85,7 @@ export const orderService = {
       if (orderData.status === 'ordered' || orderData.status === 'pending' || orderData.status === 'preparing') {
         if (!orderData.qrUsed) {
           orderData.qrUsed = true;
+          orderData.paymentStatus = 'REDEEMED';
           orderData.status = 'processing'; // Moved to processing first for KOT generation
           orderData.updatedAt = new Date().toISOString();
           orderData.scannedAt = new Date().toISOString();

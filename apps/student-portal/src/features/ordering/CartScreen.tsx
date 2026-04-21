@@ -1,6 +1,6 @@
 import { useNavigate, useLocation } from "react-router";
 import { motion } from "motion/react";
-import { ArrowLeft, Wallet, Trash2, Plus, Minus, Loader2, ShoppingCart, ShieldAlert } from "lucide-react";
+import { ArrowLeft, Wallet, Trash2, Plus, Minus, Loader2, ShoppingCart, ShieldAlert, QrCode } from "lucide-react";
 import { EmptyState } from "../../shared/components/EmptyState";
 import { useState, useEffect } from "react";
 import { useAuth } from "../../core/auth/AuthContext";
@@ -23,6 +23,10 @@ export function CartScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAdminOnline, setIsAdminOnline] = useState(true);
 
+  type PaymentMethod = 'credits' | 'upi';
+  const isEnrolled = userProfile?.isEnrolled ?? false;
+  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>('upi');
+
   // Synchronize cart with offline storage so changes (like deletions) persist
   useEffect(() => {
     offlineStorage.saveCart(cart);
@@ -36,6 +40,16 @@ export function CartScreen() {
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const totalPrice = cart.reduce((sum: number, item: any) => sum + item.price * item.qty, 0);
+    const balanceAfterOrder = (userProfile?.walletBalance || 0) - totalPrice;
+    if (isEnrolled && balanceAfterOrder >= 0) {
+      setSelectedPayment('credits');
+    } else {
+      setSelectedPayment('upi');
+    }
+  }, [isEnrolled, cart, userProfile?.walletBalance]);
 
   // Guard - Block unregistered or disabled users from seeing the cart content
   if (userProfile && (!userProfile.isRegistered || userProfile.status === 'disabled')) {
@@ -135,34 +149,53 @@ export function CartScreen() {
     }
 
     // Now we already set isSubmitting earlier
-    try {
-      const { id, orderNumber, estimatedServingWindow } = await orderService.placeOrder(
-        user.uid,
-        userProfile.rollNo,
-        cart,
-        totalPrice,
-        currentSlot
-      );
-      
-      // Eagerly update local wallet balance in memory Context so UI reflects
-      // deduction instantly without requiring a full page refresh
-      updateUserProfile({ ...userProfile, walletBalance: balanceAfterOrder });
+    if (selectedPayment === 'credits') {
+      try {
+        const { id, orderNumber, estimatedServingWindow } = await orderService.placeOrder(
+          user.uid,
+          userProfile.rollNo,
+          cart,
+          totalPrice,
+          currentSlot
+        );
+        
+        // Eagerly update local wallet balance in memory Context so UI reflects
+        // deduction instantly without requiring a full page refresh
+        updateUserProfile({ ...userProfile, walletBalance: balanceAfterOrder });
 
-      toast.success("Order placed successfully!");
-      navigate("/order-success", { state: { orderId: id, orderNumber, estimatedServingWindow, cart, totalPrice }, replace: true });
-    } catch (error: any) {
-      console.error("Order submission failed:", error);
-      
-      let errorMessage = error?.details?.message || error?.message || "Failed to place order. Please try again.";
-      
-      // Specifically handle 429 Too Many Requests (sometimes returned as internal by SDK if network fails)
-      if (errorMessage.toLowerCase().includes("too many requests") || errorMessage.includes("429")) {
-        errorMessage = "Please wait a moment before trying again.";
+        toast.success("Order placed successfully!");
+        navigate("/order-success", { state: { orderId: id, orderNumber, estimatedServingWindow, cart, totalPrice }, replace: true });
+      } catch (error: any) {
+        console.error("Order submission failed:", error);
+        
+        let errorMessage = error?.details?.message || error?.message || "Failed to place order. Please try again.";
+        
+        if (errorMessage.toLowerCase().includes("too many requests") || errorMessage.includes("429")) {
+          errorMessage = "Please wait a moment before trying again.";
+        }
+        
+        toast.error(errorMessage);
+      } finally {
+        setIsSubmitting(false);
       }
-      
-      toast.error(errorMessage);
-    } finally {
-      setIsSubmitting(false);
+    } else {
+      try {
+        const { id, orderNumber } = await orderService.placeUpiOrder(
+          user.uid,
+          userProfile.rollNo,
+          cart,
+          totalPrice,
+          currentSlot
+        );
+        
+        toast.success("UPI Order placed! Awaiting payment confirmation.");
+        navigate("/upi-pending", { state: { orderId: id, orderNumber, cart, totalPrice }, replace: true });
+      } catch (error: any) {
+        console.error("UPI Order submission failed:", error);
+        toast.error(error?.message || "Failed to place UPI order.");
+      } finally {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -256,29 +289,51 @@ export function CartScreen() {
       {cart.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#1A1A1A] to-[#1A1A1A]/95 backdrop-blur-lg border-t border-white/10 p-4 space-y-4">
           {/* Wallet Preview */}
-          <div className="bg-[#1E2A38] rounded-xl p-4 border border-white/10 space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-400">Total Price</span>
-              <span className="text-white">₹{totalPrice}</span>
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2">
-                <Wallet className="w-4 h-4 text-[#FFD54F]" />
-                <span className="text-gray-400">Current Credits</span>
+          {isEnrolled && (
+            <div className="bg-[#1E2A38] rounded-xl p-4 border border-white/10 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400">Total Price</span>
+                <span className="text-white">₹{totalPrice}</span>
               </div>
-              <span className="text-white">₹{walletBalance}</span>
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <Wallet className="w-4 h-4 text-[#FFD54F]" />
+                  <span className="text-gray-400">Current Credits</span>
+                </div>
+                <span className="text-white">₹{walletBalance}</span>
+              </div>
+              <div className="h-px bg-white/10" />
+              <div className="flex items-center justify-between">
+                <span className="text-white">Remaining Credits</span>
+                <motion.span
+                  animate={{
+                    color: balanceAfterOrder < 0 ? "#EF4444" : "#10B981",
+                  }}
+                  className="text-lg font-medium"
+                >
+                  ₹{balanceAfterOrder}
+                </motion.span>
+              </div>
             </div>
-            <div className="h-px bg-white/10" />
-            <div className="flex items-center justify-between">
-              <span className="text-white">Remaining Credits</span>
-              <motion.span
-                animate={{
-                  color: balanceAfterOrder < 0 ? "#EF4444" : "#10B981",
-                }}
-                className="text-lg font-medium"
-              >
-                ₹{balanceAfterOrder}
-              </motion.span>
+          )}
+
+          {/* Payment Method Selector */}
+          <div className="space-y-2 mb-4">
+            <p className="text-xs font-bold text-muted-foreground uppercase text-gray-400">Payment Mode</p>
+            <div className="grid grid-cols-2 gap-2">
+              {isEnrolled && (
+                <button 
+                  onClick={() => balanceAfterOrder >= 0 && setSelectedPayment("credits")} 
+                  disabled={balanceAfterOrder < 0}
+                  className={`py-3 px-3 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all border-2 ${selectedPayment === "credits" ? "bg-[#FFD54F]/20 border-[#FFD54F] text-[#FFD54F]" : "bg-[#1E2A38] border-transparent text-gray-400 opacity-80"} ${balanceAfterOrder < 0 ? "opacity-50 cursor-not-allowed" : ""}`}>
+                  <Wallet className="w-5 h-5" /> Credits
+                </button>
+              )}
+              <button 
+                onClick={() => setSelectedPayment("upi")} 
+                className={`py-3 px-3 ${!isEnrolled ? 'col-span-2' : ''} rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all border-2 ${selectedPayment === "upi" ? "bg-[#FFD54F]/20 border-[#FFD54F] text-[#FFD54F]" : "bg-[#1E2A38] border-transparent text-gray-400 opacity-80"}`}>
+                <QrCode className="w-5 h-5" /> Pay via UPI
+              </button>
             </div>
           </div>
 
@@ -293,11 +348,11 @@ export function CartScreen() {
           )}
 
           <motion.button
-            whileTap={!isSubmitting && balanceAfterOrder >= 0 && isAdminOnline ? { scale: 0.98 } : {}}
+            whileTap={!isSubmitting && isAdminOnline && (selectedPayment === 'upi' || balanceAfterOrder >= 0) ? { scale: 0.98 } : {}}
             onClick={handleConfirmOrder}
-            disabled={balanceAfterOrder < 0 || isSubmitting || !isAdminOnline}
+            disabled={isSubmitting || !isAdminOnline || (selectedPayment === 'credits' && balanceAfterOrder < 0)}
             className={`w-full py-4 rounded-xl transition-all duration-200 flex justify-center items-center gap-2 ${
-              balanceAfterOrder < 0 || isSubmitting || !isAdminOnline
+              isSubmitting || !isAdminOnline || (selectedPayment === 'credits' && balanceAfterOrder < 0)
                 ? "bg-gray-700 text-gray-400 cursor-not-allowed"
                 : "bg-gradient-to-r from-[#FFD54F] to-[#FFE082] text-[#121212] shadow-lg shadow-[#FFD54F]/30"
             }`}
@@ -306,7 +361,7 @@ export function CartScreen() {
               <><Loader2 className="w-5 h-5 animate-spin" /> Processing...</>
             ) : !isAdminOnline ? (
               "Admin Offline (Wait)"
-            ) : balanceAfterOrder < 0 ? (
+            ) : (selectedPayment === 'credits' && balanceAfterOrder < 0) ? (
               "Insufficient Credits"
             ) : (
               "Confirm Order"

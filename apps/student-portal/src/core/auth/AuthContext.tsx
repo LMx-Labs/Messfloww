@@ -18,6 +18,7 @@ export interface UserProfile {
   status: "active" | "disabled" | "pending";
   photoURL?: string;
   activeSessionId?: string;
+  isEnrolled: boolean;
 }
 
 // Generate or retrieve a unique ID for this browser instance
@@ -105,7 +106,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isRegistered: true,
       status: studentData.status || "active",
       photoURL: currentUser.photoURL || existing?.photoURL,
-      createdAt: existing?.createdAt || new Date().toISOString()
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      isEnrolled: studentData.isNightMessEnrolled === true || ((studentData.balance > 0) && (studentData.status === "active"))
     };
 
     await setDoc(userDocRef, profile);
@@ -137,7 +139,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             status: latestData.status || "active",
             walletBalance: latestData.balance !== undefined ? latestData.balance : prev.walletBalance,
             name: latestData.name || prev.name,
-            activeSessionId: latestData.activeSessionId
+            activeSessionId: latestData.activeSessionId,
+            isEnrolled: latestData.isNightMessEnrolled === true || ((latestData.balance > 0) && (latestData.status === "active"))
           };
           offlineStorage.saveProfile(updatedProfile);
           return updatedProfile;
@@ -249,7 +252,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               isRegistered: false,
               status: "pending",
               photoURL: currentUser.photoURL || undefined,
-              createdAt: currentProfile?.createdAt || new Date().toISOString()
+              createdAt: currentProfile?.createdAt || new Date().toISOString(),
+              isEnrolled: false
             };
             await setDoc(userDocRef, guestProfile);
             setUserProfile(guestProfile);

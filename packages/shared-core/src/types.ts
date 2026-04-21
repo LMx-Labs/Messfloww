@@ -9,6 +9,7 @@ export interface Student {
   credits: number;
   status: "active" | "disabled";
   uid?: string;
+  isNightMessEnrolled?: boolean;
 }
 
 export interface UserProfile {
@@ -19,10 +20,14 @@ export interface UserProfile {
   walletBalance: number;
   createdAt: string;
   isRegistered: boolean;
+  isEnrolled?: boolean;
   status: "active" | "disabled" | "pending";
   photoURL?: string;
   activeSessionId?: string;
 }
+
+// ── Payment ──
+export type PaymentStatus = "PENDING" | "PAID" | "REDEEMED";
 
 // ── Orders ──
 export interface OrderItem {
@@ -42,6 +47,7 @@ export interface Order {
   totalPrice: number;
   status: OrderStatus;
   payment_mode?: "credit" | "upi" | "cash" | "card";
+  paymentStatus?: PaymentStatus;
   slotName: string;
   slotTime?: string;
   counterNumber?: number;

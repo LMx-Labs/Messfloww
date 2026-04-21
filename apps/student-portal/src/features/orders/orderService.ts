@@ -5,7 +5,7 @@ import {
   startAfter, getDoc
 } from "firebase/firestore";
 import { db, orderService as sharedOrderService } from "@messflow/shared-core";
-import { OrderItem, OrderStatus, OrderDoc, MealSlot } from "@messflow/shared-core";
+import { OrderItem, OrderStatus, OrderDoc, MealSlot, processTransaction } from "@messflow/shared-core";
 
 export type { OrderItem, OrderStatus, OrderDoc, MealSlot };
 
@@ -21,6 +21,52 @@ export const orderService = {
     slotInfo: MealSlot
   ): Promise<{ id: string, orderNumber: number, estimatedServingWindow: string }> {
     return sharedOrderService.placeOrderWithAtomicStock(userId, userRollNo, items, totalPrice, slotInfo);
+  },
+
+  /**
+   * Places a UPI order without deducting credits, but holds stock atomically.
+   * Order goes to PENDING state waiting for staff confirmation.
+   */
+  async placeUpiOrder(
+    userId: string,
+    userRollNo: string,
+    items: OrderItem[],
+    totalPrice: number,
+    slotInfo: MealSlot
+  ): Promise<{ id: string, orderNumber: number }> {
+    const transactionInput = {
+      userId,
+      items,
+      totalPrice
+    };
+    
+    const result = await processTransaction(transactionInput);
+    if (!result.success) {
+      throw new Error(`Failed to place order: Items out of stock (${result.failedItem})`);
+    }
+
+    const orderId = `UPI-${Date.now().toString().slice(-6)}`;
+    const orderNumber = Date.now() % 1000;
+    
+    const newOrder = {
+      id: orderId,
+      userId,
+      userRollNo,
+      items: items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
+      totalPrice,
+      status: "pending",
+      payment_mode: "upi",
+      paymentStatus: "PENDING",
+      slotName: slotInfo.name,
+      orderNumber,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      autoPrint: false
+    };
+
+    await sharedOrderService.pushActiveOrder(newOrder);
+
+    return { id: orderId, orderNumber };
   },
 
   /**
