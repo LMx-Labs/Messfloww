@@ -57,7 +57,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     offlineStorage.getProfile().then((cached) => {
       if (cached) {
         setUserProfile(cached as UserProfile);
-        setLoading(false); // Let the UI paint immediately while Firebase catches up
+        // We DO NOT set loading to false here.
+        // We must wait for Firebase Auth to resolve to avoid incorrect redirects.
       }
     }).catch(console.error);
   }, []);
@@ -188,11 +189,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           // Claim session and start watching for collisions
           await claimSession(currentUser.uid);
-          await new Promise(resolve => setTimeout(resolve, 500));
           sessionListenerRef.current = watchSessionCollision(currentUser.uid, () => {
             toast.error("Security Alert: Logged in from another device.");
             firebaseSignOut(auth);
-          });
+          }, false); // Check immediately to ensure we are the active session
 
           // Fetch the user's profile document
           const userDocRef = doc(db, "users", currentUser.uid);

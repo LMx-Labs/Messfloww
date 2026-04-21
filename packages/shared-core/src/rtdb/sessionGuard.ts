@@ -19,16 +19,21 @@ export async function claimSession(uid: string): Promise<void> {
 }
 
 /** Watch for session collisions; calls onCollision if another device logs in */
-export function watchSessionCollision(uid: string, onCollision: () => void): () => void {
+export function watchSessionCollision(
+  uid: string, 
+  onCollision: () => void,
+  skipInitial: boolean = true
+): () => void {
   const sessionRef = ref(rtdb, `users/${uid}/current_session_id`);
   const localId = getDeviceSessionId();
   let isFirstSnapshot = true;
   return onValue(sessionRef, (snap: any) => {
     const remoteId = snap.val();
-    if (isFirstSnapshot) {
+    if (isFirstSnapshot && skipInitial) {
       isFirstSnapshot = false;
       return;
     }
+    isFirstSnapshot = false;
     if (remoteId && remoteId !== localId) {
       onCollision();
     }
