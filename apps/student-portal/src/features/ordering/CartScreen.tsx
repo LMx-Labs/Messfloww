@@ -134,7 +134,7 @@ export function CartScreen() {
       return;
     }
 
-    if (balanceAfterOrder < 0) {
+    if (selectedPayment === 'credits' && balanceAfterOrder < 0) {
       toast.error("Insufficient wallet balance.");
       setIsSubmitting(false);
       return;

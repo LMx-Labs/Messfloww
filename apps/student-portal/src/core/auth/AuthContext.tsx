@@ -85,10 +85,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!studentData.uid || studentData.uid !== currentUser.uid) {
       updates.uid = currentUser.uid;
     }
+    
+    // Capture name from Google Login
+    if (currentUser.displayName && (!studentData.name || studentData.name.trim() === "" || studentData.name.toLowerCase() === "unknown student")) {
+      updates.name = currentUser.displayName;
+    }
     // We remove the Firestore activeSessionId tracking from here, using RTDB instead.
 
     if (Object.keys(updates).length > 0) {
       await updateDoc(studentDocRef, updates);
+      // Update local object so profile creation uses the new name
+      if (updates.name) studentData.name = updates.name;
     }
 
     // Set Session ID to RTDB for immediate presence / lockout listening

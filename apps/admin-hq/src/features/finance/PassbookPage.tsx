@@ -5,6 +5,8 @@ import { Student } from "@messflow/shared-core";
 import * as financeService from "./financeService";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "motion/react";
+import { ref, get, query as rtdbQuery, orderByChild, equalTo } from "firebase/database";
+import { rtdb } from "@messflow/shared-core";
 
 export function PassbookPage() {
   const { students: allStudents } = useStudents();
@@ -12,6 +14,7 @@ export function PassbookPage() {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
   const [historicalOrders, setHistoricalOrders] = useState<any[]>([]);
+  const [activeOrders, setActiveOrders] = useState<any[]>([]);
 
   const studentListParentRef = useRef<HTMLDivElement>(null);
   const transactionListParentRef = useRef<HTMLDivElement>(null);
@@ -20,6 +23,22 @@ export function PassbookPage() {
     if (selectedStudent) {
       const unsubLedger = financeService.subscribeStudentLedger(selectedStudent.regNo, setLedgerEntries);
       const unsubOrders = financeService.subscribeStudentHistoricalOrders(selectedStudent.regNo, setHistoricalOrders);
+      
+      // Fetch active orders for this student
+      const activeOrdersRef = ref(rtdb, "active_orders");
+      const userOrdersQuery = rtdbQuery(activeOrdersRef, orderByChild("userRollNo"), equalTo(selectedStudent.regNo));
+      get(userOrdersQuery).then((snapshot) => {
+        if (snapshot.exists()) {
+          const orders: any[] = [];
+          snapshot.forEach((child) => {
+            orders.push({ id: child.key, ...child.val() });
+          });
+          setActiveOrders(orders);
+        } else {
+          setActiveOrders([]);
+        }
+      });
+
       return () => {
         unsubLedger();
         unsubOrders();
@@ -27,6 +46,7 @@ export function PassbookPage() {
     } else {
       setLedgerEntries([]);
       setHistoricalOrders([]);
+      setActiveOrders([]);
     }
   }, [selectedStudent]);
 
@@ -39,29 +59,32 @@ export function PassbookPage() {
   const transactions = useMemo(() => {
     if (!selectedStudent) return [];
     
-    // Terminal orders are already archived in historical_orders in Firestore
-    const histOrderTransactions = historicalOrders.map(o => ({
+    // Non-wallet orders from active and historical orders
+    const allOrders = [...activeOrders, ...historicalOrders];
+    const nonWalletOrders = allOrders.filter(o => o.payment_mode !== 'credits' && o.payment_mode !== 'credit');
+    
+    const orderTransactions = nonWalletOrders.map(o => ({
       id: o.id,
-      date: o.createdAt.split('T')[0],
+      date: o.createdAt ? o.createdAt.split('T')[0] : new Date().toISOString().split('T')[0],
       type: "debit" as const,
-      description: `Order: ${o.items.map((i: any) => i.name).join(", ")}`,
+      description: `Order (${o.payment_mode || 'External'}): ${o.items?.map((i: any) => i.name).join(", ")}`,
       amount: o.totalPrice,
-      timestamp: { seconds: new Date(o.createdAt).getTime() / 1000 }
+      timestamp: { seconds: new Date(o.createdAt || Date.now()).getTime() / 1000 }
     }));
 
     const ledgerTransactions = ledgerEntries.map(e => ({
       id: e.id,
-      date: e.timestamp?.seconds ? new Date(e.timestamp.seconds * 1000).toISOString().split('T')[0] : "N/A",
+      date: e.timestamp?.seconds ? new Date(e.timestamp.seconds * 1000).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
       type: (e.type === "topup" ? "credit" : "debit") as "credit" | "debit",
-      description: e.description || "Wallet Update",
+      description: e.description || (e.type === "purchase" ? "Wallet Purchase" : "Wallet Top-up"),
       amount: e.amount,
-      timestamp: e.timestamp || { seconds: 0 }
+      timestamp: e.timestamp || { seconds: Date.now() / 1000 }
     }));
 
-    const all = [...histOrderTransactions, ...ledgerTransactions];
+    const all = [...orderTransactions, ...ledgerTransactions];
     const unique = Array.from(new Map(all.map(t => [t.id, t])).values());
     return unique.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-  }, [selectedStudent, ledgerEntries, historicalOrders]);
+  }, [selectedStudent, ledgerEntries, historicalOrders, activeOrders]);
 
   const studentVirtualizer = useVirtualizer({
     count: filteredStudents.length,

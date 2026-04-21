@@ -365,6 +365,17 @@ export const securePlaceOrder = https.onCall(async (request: https.CallableReque
          const newCred = (studentSnap.data()?.credits || 0) - totalPrice;
          transaction.update(result.studentRef, { balance: newBal, credits: newCred });
          transaction.update(db.collection('users').doc(auth.uid), { walletBalance: newBal });
+         
+         const ledgerRef = db.collection('ledger').doc();
+         transaction.set(ledgerRef, {
+           type: 'purchase',
+           studentRegNo: result.studentData!.regNo,
+           studentUid: auth.uid,
+           amount: totalPrice,
+           orderId: orderId,
+           timestamp: admin.firestore.FieldValue.serverTimestamp(),
+           description: `Order ${orderId}`
+         });
        }
        if (result.counterExists) {
          transaction.update(result.dailyCounterRef, { count: result.orderNumber });

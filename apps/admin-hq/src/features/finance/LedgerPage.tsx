@@ -3,7 +3,8 @@ import { ChevronDown, ChevronUp, Filter, Download, FileText, RefreshCw, Loader2 
 import { EmptyState } from "../../app/components/EmptyState";
 import * as financeService from "./financeService";
 import { collection, getDocs, query, orderBy, limit, QueryDocumentSnapshot } from "firebase/firestore";
-import { db } from "@messflow/shared-core";
+import { ref, get } from "firebase/database";
+import { db, rtdb } from "@messflow/shared-core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
@@ -26,9 +27,17 @@ export function LedgerPage() {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      const activeQ = query(collection(db, "active_orders"), orderBy("createdAt", "desc"), limit(50));
-      const activeSnap = await getDocs(activeQ);
-      const activeData = activeSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Fetch active orders from RTDB
+      const activeOrdersRef = ref(rtdb, "active_orders");
+      const activeSnap = await get(activeOrdersRef);
+      const activeData: any[] = [];
+      if (activeSnap.exists()) {
+        activeSnap.forEach((childSnap: any) => {
+          activeData.push({ id: childSnap.key, ...childSnap.val() });
+        });
+      }
+      // Sort active orders descending
+      activeData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
       const { orders: histOrders, lastDoc: newLastDoc, hasMore: newHasMore } = await financeService.fetchLedgerPage(50);
       setOrders([...activeData, ...histOrders]);

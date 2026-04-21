@@ -335,13 +335,39 @@ export function BarcodeScanPage() {
         </div>
       ) : (
         <div className="space-y-6 max-w-3xl mx-auto">
-          {scannedOrder.needsPaymentConfirmation ? (
-             <div className="bg-amber-500/20 border-4 border-amber-500 rounded-[3rem] p-12 text-center">
-                <div className="flex justify-center mb-6"><div className="p-8 rounded-full bg-amber-500"><Clock className="h-16 w-16 text-amber-900" /></div></div>
-                <h2 className="text-4xl font-black text-foreground mb-3">Awaiting Payment</h2>
-                <p className="text-amber-500 font-bold text-xl">Please confirm the UPI payment to proceed.</p>
-             </div>
-          ) : (
+        <div className="space-y-6 max-w-3xl mx-auto">
+          {/* Payment Verification Modal */}
+          {scannedOrder.needsPaymentConfirmation && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
+              <div className="bg-card w-full max-w-lg rounded-[2rem] p-8 border border-amber-500/30 shadow-2xl animate-in zoom-in-95 duration-200">
+                <div className="flex justify-center mb-6">
+                  <div className="p-6 rounded-full bg-amber-500/20">
+                    <Clock className="h-12 w-12 text-amber-500" />
+                  </div>
+                </div>
+                <h2 className="text-3xl font-black text-center text-foreground mb-2">Verify UPI Payment</h2>
+                <p className="text-muted-foreground text-center mb-8 text-lg">
+                  Amount to collect: <span className="font-black text-amber-500 text-2xl">₹{scannedOrder.totalPrice}</span>
+                </p>
+                <div className="flex gap-4">
+                  <button 
+                    onClick={() => handleConfirmPaymentAndPrint(scannedOrder.id)} 
+                    className="flex-1 bg-amber-500 text-amber-950 px-6 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 hover:bg-amber-400 transition-colors"
+                  >
+                    <Check className="w-6 h-6" /> Payment Verified
+                  </button>
+                  <button 
+                    onClick={handleNewScan} 
+                    className="flex-1 bg-muted hover:bg-muted/80 text-foreground px-6 py-4 rounded-xl font-bold text-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!scannedOrder.needsPaymentConfirmation && (
             <div className={`bg-accent/20 border-4 border-accent rounded-[3rem] p-12 text-center transition-colors duration-500 ${successFlash ? 'bg-accent/40 shadow-[0_0_50px_rgba(34,197,94,0.4)]' : ''}`}>
               <div className="flex justify-center mb-6"><div className="p-8 rounded-full bg-accent"><Check className="h-16 w-16 text-accent-foreground" /></div></div>
               <h2 className="text-4xl font-black text-foreground mb-3">Order Verified!</h2>
@@ -367,12 +393,7 @@ export function BarcodeScanPage() {
               <span className="text-2xl font-bold">₹{scannedOrder.totalPrice}</span>
             </div>
           </div>
-          {scannedOrder.needsPaymentConfirmation ? (
-            <div className="flex gap-4">
-              <button onClick={() => handleConfirmPaymentAndPrint(scannedOrder.id)} className="flex-1 bg-amber-500 text-amber-950 px-6 py-4 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors">Confirm UPI Payment & Print</button>
-              <button onClick={handleNewScan} className="flex-1 bg-muted text-foreground px-6 py-4 rounded-xl font-semibold transition-colors">Cancel</button>
-            </div>
-          ) : (
+          {!scannedOrder.needsPaymentConfirmation && (
             <div className="flex gap-4">
               <button onClick={handlePrintReceipt} className="flex-1 bg-primary text-primary-foreground px-6 py-4 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors"><Printer className="h-5 w-5" /> Print Receipt</button>
               <button onClick={handleNewScan} className="flex-1 bg-muted text-foreground px-6 py-4 rounded-xl font-semibold transition-colors">New Scan</button>

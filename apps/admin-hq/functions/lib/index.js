@@ -254,8 +254,10 @@ exports.securePlaceOrder = https.onCall(async (request) => {
         if (isAdminOnline === false) {
             throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
         }
-        // Generate unique order ID early (RTDB push key style)
-        const orderId = rtdb.ref('active_orders').push().key;
+        // Generate standard order ID
+        const ts = Math.floor(Date.now() / 1000);
+        const shortUid = auth.uid.length >= 4 ? auth.uid.slice(-4).toUpperCase() : auth.uid.padEnd(4, '0').toUpperCase();
+        const orderId = `MFW-${ts}-${shortUid}`;
         // Get order counter for today
         const today = new Date().toISOString().split('T')[0];
         const dailyCounterRef = db.doc(`orderCounters/${today}`);
@@ -357,6 +359,16 @@ exports.securePlaceOrder = https.onCall(async (request) => {
                 const newCred = (((_b = studentSnap.data()) === null || _b === void 0 ? void 0 : _b.credits) || 0) - totalPrice;
                 transaction.update(result.studentRef, { balance: newBal, credits: newCred });
                 transaction.update(db.collection('users').doc(auth.uid), { walletBalance: newBal });
+                const ledgerRef = db.collection('ledger').doc();
+                transaction.set(ledgerRef, {
+                    type: 'purchase',
+                    studentRegNo: result.studentData.regNo,
+                    studentUid: auth.uid,
+                    amount: totalPrice,
+                    orderId: orderId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    description: `Order ${orderId}`
+                });
             }
             if (result.counterExists) {
                 transaction.update(result.dailyCounterRef, { count: result.orderNumber });

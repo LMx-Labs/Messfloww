@@ -42,6 +42,7 @@ export const groupOrdersByDate = (orders: Order[]) => {
 // --- Data Fetchers ---
 
 export const fetchOrdersForRange = async (startDate: Date, endDate: Date): Promise<Order[]> => {
+  // 1. Fetch from Firestore (Historical Orders)
   const ordersRef = collection(db, "historical_orders");
   const q = query(
     ordersRef,
@@ -53,7 +54,20 @@ export const fetchOrdersForRange = async (startDate: Date, endDate: Date): Promi
   const orders: Order[] = [];
   snapshot.forEach((doc) => orders.push({ id: doc.id, ...doc.data() } as Order));
   
-
+  // 2. Fetch from RTDB (Active Orders)
+  const activeOrdersRef = ref(rtdb, "active_orders");
+  const activeSnap = await get(activeOrdersRef);
+  if (activeSnap.exists()) {
+    activeSnap.forEach((childSnap: any) => {
+      const order = { id: childSnap.key, ...childSnap.val() } as Order;
+      if (order.createdAt) {
+        const orderDate = new Date(order.createdAt);
+        if (orderDate >= startDate && orderDate <= endDate) {
+          orders.push(order);
+        }
+      }
+    });
+  }
 
   return orders;
 };
@@ -200,22 +214,33 @@ export const generatePaymentTypeReport = async (startDate: Date, endDate: Date):
     const orders = await fetchOrdersForRange(startDate, endDate);
     
     let wallet = 0;
-    let external = 0;
-    let counter = 0;
+    let upi = 0;
+    let cash = 0;
+    let other = 0;
 
     orders.forEach(order => {
         if (order.status !== 'cancelled') {
-            if (order.isExternal) external += order.totalPrice;
-            else if (order.isCounterOrder) counter += order.totalPrice;
-            else wallet += order.totalPrice; // Assuming regular app orders are wallet
+            const mode = (order.payment_mode || "credits").toLowerCase();
+            if (mode === "credits" || mode === "credit") {
+                wallet += order.totalPrice;
+            } else if (mode === "upi") {
+                upi += order.totalPrice;
+            } else if (mode === "cash") {
+                cash += order.totalPrice;
+            } else {
+                other += order.totalPrice;
+            }
         }
     });
 
     const data = [
-        { name: "Wallet (Student App)", value: wallet, fill: "var(--chart-1)" },
-        { name: "External (Shop)", value: external, fill: "var(--chart-2)" },
-        { name: "Counter (Admin)", value: counter, fill: "var(--chart-3)" }
+        { name: "Wallet (Credits)", value: wallet, fill: "var(--chart-1)" },
+        { name: "UPI (External)", value: upi, fill: "var(--chart-2)" },
+        { name: "Cash", value: cash, fill: "var(--chart-3)" }
     ];
+    if (other > 0) {
+        data.push({ name: "Other (Card/Etc)", value: other, fill: "var(--chart-4)" });
+    }
 
     return {
         title: "Payment Type Breakdown",
