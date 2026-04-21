@@ -64,7 +64,7 @@ export function LoginScreen() {
         >
           <h2 className="text-white text-xl font-medium mb-6">Student Login</h2>
           <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-            Use your @vitstudent.ac.in college account to access Night Mess.
+            Sign in with your account to access Messfloww and place orders.
           </p>
 
 
