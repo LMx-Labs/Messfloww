@@ -1,6 +1,21 @@
 {
   "rules": {
     ".read": true,
-    ".write": true
+    ".write": true,
+    "active_orders": {
+      ".indexOn": ["userId"]
+    },
+    "menu_stock": {
+      "$itemId": {
+        "stock": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        }
+      }
+    },
+    "kot_queue": {
+      "$counterId": {
+        ".indexOn": ["status"]
+      }
+    }
   }
 }

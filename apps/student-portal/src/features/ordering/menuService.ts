@@ -1,8 +1,7 @@
 import { db, menuService as coreMenuService, MenuItem } from "@messflow/shared-core";
 import { offlineStorage } from "../../core/../shared/lib/offline/storage";
 
-
-
+export type { MenuItem };
 export type MenuData = Record<string, MenuItem[]>;
 
 export const menuService = {

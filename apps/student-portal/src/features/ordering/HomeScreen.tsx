@@ -51,7 +51,6 @@ export function HomeScreen() {
       // Force reload slot and menu data
       const slot = await getCurrentSlot();
       setActiveSlot(slot);
-      setActiveSlot(slot);
       if (slot) {
         setSelectedCategory(slot.name.toLowerCase());
       }
@@ -199,17 +198,17 @@ export function HomeScreen() {
   const addToCart = (item: { id: number; name: string; price: number }) => {
     if (!userProfile?.isRegistered || userProfile?.status === 'disabled') return;
 
-    setCart((prev) => {
-      const existing = prev.find((i) => i.id === item.id);
+    setCart((prev: any[]) => {
+      const existing = prev.find((i: any) => i.id === item.id);
       if (existing) {
-        return prev.map((i) => (i.id === item.id ? { ...i, qty: i.qty + 1 } : i));
+        return prev.map((i: any) => (i.id === item.id ? { ...i, qty: i.qty + 1 } : i));
       }
       return [...prev, { ...item, qty: 1 }];
     });
   };
 
-  const totalItems = cart.reduce((sum, item) => sum + item.qty, 0);
-  const totalPrice = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const totalItems = cart.reduce((sum: number, item: any) => sum + item.qty, 0);
+  const totalPrice = cart.reduce((sum: number, item: any) => sum + item.price * item.qty, 0);
   const walletBalance = userProfile?.walletBalance || 0;
 
   if (loading) {
