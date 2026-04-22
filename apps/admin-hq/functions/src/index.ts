@@ -1,9 +1,11 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import * as https from 'firebase-functions/v2/https';
+/*
 import { transporter, SENDER_EMAIL } from './config/mailer';
 import { getDailyRevenueSummary, getLowStockAlerts } from './services/dataAggregator';
 import { generateReportEmailHTML } from './services/emailTemplates';
+*/
 
 // Admin initialized in dataAggregator.ts, but let's ensure it here just in case this loads first
 if (admin.apps.length === 0) {
@@ -16,6 +18,7 @@ if (admin.apps.length === 0) {
  * Hourly Cron Job: Processes active report subscriptions and emails them.
  * Efficiency constraints: Limit queries, optimize sends.
  */
+/*
 export const processSubscriptions = functions.pubsub.schedule('every 1 hours').onRun(async (context: any) => {
   const db = admin.firestore();
   
@@ -100,123 +103,9 @@ export const processSubscriptions = functions.pubsub.schedule('every 1 hours').o
     return null;
   }
 });
+*/
 
-/**
- * Minute-by-minute Cron Job: Automates Mess Slot Auto-Toggle (ON/OFF).
- * Ensures slots work irrespective of dashboard status.
- */
-export const checkMessSlotTimer = functions.pubsub.schedule('every 1 minutes').onRun(async (context: any) => {
-  const db = admin.firestore();
-  const rtdb = admin.database();
 
-  try {
-    // 1. Fetch Config and Settings
-    const [configSnap, settingsSnap, currentSnap] = await Promise.all([
-      db.doc('timeSlots/config').get(),
-      db.doc('timeSlots/settings').get(),
-      db.doc('timeSlots/current').get()
-    ]);
-
-    if (!configSnap.exists) return null;
-
-    const slots = configSnap.data()?.slots as any[] || [];
-    const settings = settingsSnap.data() || { thresholdMinutes: 5, autoToggleEnabled: true };
-    const currentSlotData = currentSnap.data() || { active: false, slot: null };
-
-    if (!settings.autoToggleEnabled) {
-      functions.logger.info("Auto-toggle is disabled. Skipping.");
-      return null;
-    }
-
-    // 2. Determine Current Time in IST (Asia/Kolkata)
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Kolkata',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-    const parts = formatter.formatToParts(now);
-    const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-    const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
-    const currentTimeMinutes = hour * 60 + minute;
-
-    functions.logger.info(`Checking slots at IST ${hour}:${minute} (${currentTimeMinutes} mins)`);
-
-    // Helper to parse "HH:mm" or "HH:mm AM/PM" into minutes
-    const parseTime = (timeStr: string) => {
-      const timeParts = timeStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-      if (!timeParts) return null;
-      let h = parseInt(timeParts[1]);
-      const m = parseInt(timeParts[2]);
-      const period = timeParts[3];
-      if (period) {
-        if (period.toUpperCase() === 'PM' && h !== 12) h += 12;
-        else if (period.toUpperCase() === 'AM' && h === 12) h = 0;
-      }
-      return h * 60 + m;
-    };
-
-    let shouldBeActiveSlot: any = null;
-
-    for (const slot of slots) {
-      const startMins = parseTime(slot.startTime);
-      const endMins = parseTime(slot.endTime);
-      if (startMins === null || endMins === null) continue;
-
-      const autoOffMins = (endMins + (settings.thresholdMinutes || 5)) % 1440;
-
-      let isInside = false;
-      if (startMins > autoOffMins) { // Crosses midnight
-        isInside = currentTimeMinutes >= startMins || currentTimeMinutes < autoOffMins;
-      } else {
-        isInside = currentTimeMinutes >= startMins && currentTimeMinutes < autoOffMins;
-      }
-
-      if (isInside) {
-        shouldBeActiveSlot = slot;
-        break; // Only one slot active at a time
-      }
-    }
-
-    // 3. Compare with current state and Update if needed
-    const currentActiveId = currentSlotData.active ? currentSlotData.slot?.id : null;
-    const targetActiveId = shouldBeActiveSlot ? shouldBeActiveSlot.id : null;
-
-    if (currentActiveId !== targetActiveId) {
-      functions.logger.info(`Transitioning slot: ${currentActiveId} -> ${targetActiveId}`);
-      
-      const slotRef = db.doc('timeSlots/current');
-      if (shouldBeActiveSlot) {
-        // Activate
-        await slotRef.set({
-          active: true,
-          slot: shouldBeActiveSlot,
-          updatedAt: now.toISOString(),
-          autoToggled: true
-        });
-        await rtdb.ref('mess_status').set({ isOpen: true, currentlyServing: 0 });
-      } else {
-        // Deactivate
-        await slotRef.set({
-          active: false,
-          slot: null,
-          updatedAt: now.toISOString(),
-          autoToggled: true
-        });
-        await rtdb.ref('mess_status').set({ isOpen: false });
-      }
-    } else {
-      // Periodic Sync just in case
-      await rtdb.ref('mess_status/isOpen').set(currentSlotData.active);
-    }
-
-    return null;
-  } catch (error) {
-    functions.logger.error("Error in checkMessSlotTimer:", error);
-    return null;
-  }
-});
 
 /**
  * securePlaceOrder: The "Aspirin Logic" Checkout Flow

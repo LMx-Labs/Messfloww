@@ -3,6 +3,9 @@ import ReactDOMServer from 'react-dom/server';
 import { ThermalReceipt } from './ThermalReceipt';
 import { BillDocument, ReceiptSettings } from './types';
 
+// Global queue to ensure sequential printing
+let printQueue = Promise.resolve();
+
 /**
  * Utility to trigger a thermal receipt print using a hidden iframe.
  * This ensures that the print layout is isolated from the main UI.
@@ -93,4 +96,48 @@ export const printReceipt = (data: BillDocument | BillDocument[], settings?: Rec
   iframeDoc.open();
   iframeDoc.write(fullHtml);
   iframeDoc.close();
+};
+
+/**
+ * Attempts to print silently via the local Python print server.
+ * Falls back to the iframe method if the server is unavailable.
+ * Uses a sequential queue to prevent overlapping jobs.
+ */
+export const printReceiptSilent = (data: BillDocument | BillDocument[], settings?: ReceiptSettings): Promise<void> => {
+  const executePrint = async () => {
+    try {
+      const itemsArray = Array.isArray(data) ? data : [data];
+      
+      // Try local Python print server first
+      const response = await fetch('http://localhost:5000/print-kot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Send the first document. In a real system, we might loop or the server might handle arrays.
+        // Based on the python script we wrote, it expects a single order JSON object.
+        body: JSON.stringify(itemsArray[0]) 
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.error || 'Print server failed to print');
+      }
+      
+      console.log('Successfully printed via local server');
+    } catch (error) {
+      console.warn('Silent print failed, falling back to iframe dialog:', error);
+      // Fallback to iframe method
+      printReceipt(data, settings);
+      
+      // Add a small delay for the fallback to process before the next job
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  };
+
+  // Add to sequential queue
+  printQueue = printQueue.then(executePrint).catch(executePrint);
+  return printQueue;
 };

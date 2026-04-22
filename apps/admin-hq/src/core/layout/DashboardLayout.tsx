@@ -52,7 +52,7 @@ export function DashboardLayout() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const { activeSlot } = useTimeSlots();
+  const { activeSlot, autoToggleEnabled, isTabVisible } = useTimeSlots();
   const { isAuthenticated, logout, role, loading, user, adminUnlocked, setRoleOverride, unlockAdmin, lockAdmin } = useAuth();
 
   const [showElevateModal, setShowElevateModal] = useState(false);
@@ -255,6 +255,19 @@ export function DashboardLayout() {
               {activeSlot ? activeSlot.name : "Mess Closed"}
             </div>
             
+            <div className={`px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-2 ${
+              autoToggleEnabled && isTabVisible ? "bg-green-500/10 text-green-500 border border-green-500/20" :
+              autoToggleEnabled && !isTabVisible ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" :
+              "bg-destructive/10 text-destructive border border-destructive/20"
+            }`}>
+              {autoToggleEnabled && isTabVisible ? (
+                <><div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div> Auto-Pilot Active</>
+              ) : autoToggleEnabled && !isTabVisible ? (
+                <><div className="w-2 h-2 rounded-full bg-amber-500"></div> Auto-Pilot Paused (Tab Hidden)</>
+              ) : (
+                <><div className="w-2 h-2 rounded-full bg-destructive"></div> Auto-Pilot Off</>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-4">

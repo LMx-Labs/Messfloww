@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, ReactNode, useEffect } from "react";
+import { createContext, useContext, useState, ReactNode, useEffect, useRef } from "react";
 import { timeSlotService } from "@messflow/shared-core";
+import { toast } from "sonner";
 
 export interface TimeSlot {
   id: number;
@@ -20,6 +21,8 @@ interface TimeSlotContextType {
   setThresholdMinutes: (val: number) => void;
   autoToggleEnabled: boolean;
   setAutoToggleEnabled: (val: boolean) => void;
+  isTabVisible: boolean;
+  lastHiddenTime: number | null;
 }
 
 const TimeSlotContext = createContext<TimeSlotContextType | undefined>(undefined);
@@ -31,6 +34,8 @@ export function TimeSlotProvider({ children }: { children: ReactNode }) {
 
   const [thresholdMinutes, setThresholdMinutes] = useState<number>(5);
   const [autoToggleEnabled, setAutoToggleEnabled] = useState<boolean>(true);
+  const [isTabVisible, setIsTabVisible] = useState(!document.hidden);
+  const [lastHiddenTime, setLastHiddenTime] = useState<number | null>(null);
 
   // Sync settings with Firestore when they change
   useEffect(() => {
@@ -114,8 +119,33 @@ export function TimeSlotProvider({ children }: { children: ReactNode }) {
     // Check every 30 seconds
     const interval = setInterval(checkAutoToggle, 30000);
     checkAutoToggle();
+    
+    // Page Visibility API Guard
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setIsTabVisible(false);
+        setLastHiddenTime(Date.now());
+      } else {
+        setIsTabVisible(true);
+        // If hidden for > 5 minutes, force a check and warn
+        setLastHiddenTime((prevTime) => {
+          if (prevTime && Date.now() - prevTime > 5 * 60 * 1000) {
+            toast.warning("Dashboard was hidden for a while. Re-syncing time slots now...");
+            checkAutoToggle();
+          } else {
+            checkAutoToggle(); // Always check when returning
+          }
+          return null;
+        });
+      }
+    };
 
-    return () => clearInterval(interval);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [timeSlots, thresholdMinutes, autoToggleEnabled]);
 
   // 1. Fetch config and listen to active slot
@@ -181,7 +211,9 @@ export function TimeSlotProvider({ children }: { children: ReactNode }) {
       thresholdMinutes,
       setThresholdMinutes,
       autoToggleEnabled,
-      setAutoToggleEnabled
+      setAutoToggleEnabled,
+      isTabVisible,
+      lastHiddenTime
     }}>
       {children}
     </TimeSlotContext.Provider>

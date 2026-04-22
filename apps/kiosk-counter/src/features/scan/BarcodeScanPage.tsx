@@ -9,7 +9,7 @@ import {
   timeSlotService, 
   fetchSettings,
   parseQRCodeValue,
-  printReceipt,
+  printReceiptSilent,
   mapOrderToBill,
   mapOrderToKOTs,
   MenuItem,
@@ -33,6 +33,7 @@ export function BarcodeScanPage() {
   const [counters, setCounters] = useState<any[]>([]);
   const [settings, setSettings] = useState<any>(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [printStatus, setPrintStatus] = useState<'idle' | 'printing' | 'error'>('idle');
 
   useEffect(() => {
     const unsubSlot = timeSlotService.subscribeToActiveSlot(setActiveSlot);
@@ -170,10 +171,17 @@ export function BarcodeScanPage() {
           await kotQueueService.routeOrderToCounters(collectedOrder, counters, allMenuItems);
         }
         
-        setTimeout(() => {
+        setTimeout(async () => {
           const bill = mapOrderToBill(collectedOrder);
           const kots = mapOrderToKOTs(collectedOrder, allMenuItems);
-          printReceipt([bill, ...kots], settings);
+          setPrintStatus('printing');
+          try {
+            await printReceiptSilent([bill, ...kots], settings);
+            setPrintStatus('idle');
+          } catch (e) {
+            setPrintStatus('error');
+            setTimeout(() => setPrintStatus('idle'), 3000);
+          }
         }, 500);
 
       } else {
@@ -255,8 +263,17 @@ export function BarcodeScanPage() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [scannedOrder, handleScan]);
 
-  const handlePrintReceipt = () => {
-    if (scannedOrder) printReceipt(mapOrderToBill(scannedOrder), settings);
+  const handlePrintReceipt = async () => {
+    if (scannedOrder) {
+      setPrintStatus('printing');
+      try {
+        await printReceiptSilent(mapOrderToBill(scannedOrder), settings);
+        setPrintStatus('idle');
+      } catch (e) {
+        setPrintStatus('error');
+        setTimeout(() => setPrintStatus('idle'), 3000);
+      }
+    }
   };
 
   const handleConfirmPaymentAndPrint = async (orderId: string) => {
@@ -272,10 +289,17 @@ export function BarcodeScanPage() {
       const allMenuItems = Object.values(menu).flat();
       await kotQueueService.routeOrderToCounters(collectedOrder, counters, allMenuItems);
       
-      setTimeout(() => {
+      setTimeout(async () => {
         const bill = mapOrderToBill(collectedOrder);
         const kots = mapOrderToKOTs(collectedOrder, allMenuItems);
-        printReceipt([bill, ...kots], settings);
+        setPrintStatus('printing');
+        try {
+          await printReceiptSilent([bill, ...kots], settings);
+          setPrintStatus('idle');
+        } catch (e) {
+          setPrintStatus('error');
+          setTimeout(() => setPrintStatus('idle'), 3000);
+        }
       }, 500);
     } catch (e: any) {
       toast.error(e.message || "Failed to confirm payment");
@@ -370,7 +394,20 @@ export function BarcodeScanPage() {
             <div className={`bg-accent/20 border-4 border-accent rounded-[3rem] p-12 text-center transition-colors duration-500 ${successFlash ? 'bg-accent/40 shadow-[0_0_50px_rgba(34,197,94,0.4)]' : ''}`}>
               <div className="flex justify-center mb-6"><div className="p-8 rounded-full bg-accent"><Check className="h-16 w-16 text-accent-foreground" /></div></div>
               <h2 className="text-4xl font-black text-foreground mb-3">Order Verified!</h2>
-              <p className="text-accent font-bold text-xl">Sent to kitchen for processing</p>
+              <p className="text-accent font-bold text-xl mb-4">Sent to kitchen for processing</p>
+              
+              <div className="h-8 flex justify-center items-center">
+                {printStatus === 'printing' && (
+                  <span className="inline-flex items-center gap-2 px-3 py-1 bg-blue-500/20 text-blue-500 font-bold rounded-full animate-pulse">
+                    <Printer className="w-4 h-4" /> Printing Receipt & KOTs...
+                  </span>
+                )}
+                {printStatus === 'error' && (
+                  <span className="inline-flex items-center gap-2 px-3 py-1 bg-destructive/20 text-destructive font-bold rounded-full">
+                    <AlertCircle className="w-4 h-4" /> Print Failed
+                  </span>
+                )}
+              </div>
             </div>
           )}
           <div className="bg-card rounded-3xl p-8 border border-border shadow-xl">
