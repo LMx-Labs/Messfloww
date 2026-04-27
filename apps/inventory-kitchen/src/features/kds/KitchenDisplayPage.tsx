@@ -20,7 +20,7 @@ export function KitchenDisplayPage() {
   const [settings, setSettings] = useState<any>(null);
   
   const [menu, setMenu] = useState<Record<string, MenuItem[]>>({});
-  const allMenuItems = Object.values(menu).flat();
+  const allMenuItems: MenuItem[] = Object.values(menu).flat();
   
   const routedOrders = useRef<Set<string>>(new Set());
   const autoPrintedOrders = useRef<Set<string>>(new Set());
@@ -30,7 +30,7 @@ export function KitchenDisplayPage() {
   });
 
   const toggleAutoPrint = () => {
-    setAutoPrint(prev => {
+    setAutoPrint((prev: boolean) => {
       const next = !prev;
       localStorage.setItem('kds_autoPrint', String(next));
       return next;
@@ -126,7 +126,7 @@ export function KitchenDisplayPage() {
               <h2 className="text-xl font-semibold text-muted-foreground">All caught up! No pending orders.</h2>
             </motion.div>
           ) : (
-            orders.map((order) => (
+            orders.map((order: Order) => (
               <motion.div layout key={order.id} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="bg-card border-2 border-border rounded-3xl overflow-hidden flex flex-col shadow-sm">
                 <div className="p-5 border-b border-border bg-muted/30 flex justify-between items-center">
                   <div className="flex items-center gap-2">
@@ -140,8 +140,8 @@ export function KitchenDisplayPage() {
                   <div className="px-3 py-1 bg-amber-500/10 text-amber-500 rounded-full text-[10px] font-black uppercase tracking-widest">{order.status}</div>
                 </div>
                 <div className="p-5 flex-grow space-y-4">
-                  {order.items.map((item, idx) => {
-                    const menuItem = allMenuItems.find(m => m.id === item.id);
+                  {order.items.map((item: any, idx: number) => {
+                    const menuItem = allMenuItems.find((m: MenuItem) => m.id === item.id);
                     return (
                     <div key={idx} className="flex items-start gap-3">
                       <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center font-black text-primary">{item.qty}</div>
