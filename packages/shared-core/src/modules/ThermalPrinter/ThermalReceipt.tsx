@@ -1,5 +1,5 @@
 import React from 'react';
-import { BillDocument, ReceiptSettings } from './types';
+import { BillDocument, BillItem, ReceiptSettings } from './types';
 import './ThermalReceipt.css';
 
 interface ThermalReceiptProps {
@@ -11,14 +11,14 @@ export const ThermalReceipt: React.FC<ThermalReceiptProps> = ({ data, settings: 
   // Use settings from data if available, otherwise from props
   const settings = data.settings || propSettings;
   const messName = settings?.messName || "MESS";
-  
+
   const { customer, items, meta, account, billId, timestamp } = data;
 
   // Format Date
-  const dateStr = timestamp instanceof Date 
-    ? timestamp.toLocaleString() 
-    : timestamp?.toDate 
-      ? timestamp.toDate().toLocaleString() 
+  const dateStr = timestamp instanceof Date
+    ? timestamp.toLocaleString()
+    : timestamp?.toDate
+      ? timestamp.toDate().toLocaleString()
       : new Date().toLocaleString();
 
   // Calculations
@@ -40,7 +40,7 @@ export const ThermalReceipt: React.FC<ThermalReceiptProps> = ({ data, settings: 
   });
 
   const grandTotal = calculatedItems.reduce((acc, item) => acc + item.lineTotal, 0);
-  
+
   // Group tax breakdown by percentage
   const taxBreakdown = calculatedItems.reduce((acc, item) => {
     const key = item.gstPercentage.toString();
@@ -60,8 +60,8 @@ export const ThermalReceipt: React.FC<ThermalReceiptProps> = ({ data, settings: 
           <h1 className="thermal-title">{messName}</h1>
           {data.isKOT ? (
             <>
-              <p className="thermal-subtitle text-lg font-bold" style={{fontSize: '1.2rem', marginTop: '4px'}}>KITCHEN ORDER TICKET</p>
-              {data.kotCategory && <p className="thermal-subtitle font-black" style={{fontSize: '1.4rem', border: '2px solid black', padding: '2px 8px', display: 'inline-block', marginTop: '4px'}}>{data.kotCategory}</p>}
+              <p className="thermal-subtitle text-lg font-bold" style={{ fontSize: '1.2rem', marginTop: '4px' }}>KITCHEN ORDER TICKET</p>
+              {data.kotCategory && <p className="thermal-subtitle font-black" style={{ fontSize: '1.4rem', border: '2px solid black', padding: '2px 8px', display: 'inline-block', marginTop: '4px' }}>{data.kotCategory}</p>}
             </>
           ) : (
             <>
@@ -102,8 +102,8 @@ export const ThermalReceipt: React.FC<ThermalReceiptProps> = ({ data, settings: 
         <div className="thermal-divider" />
 
         <div className="thermal-item-header">
-          <span className="thermal-col-name" style={data.isKOT ? {flex: 3} : {}}>ITEM</span>
-          <span className="thermal-col-qty" style={data.isKOT ? {flex: 1, textAlign: 'right', fontSize: '1.2rem'} : {}}>QTY</span>
+          <span className="thermal-col-name" style={data.isKOT ? { flex: 3 } : {}}>ITEM</span>
+          <span className="thermal-col-qty" style={data.isKOT ? { flex: 1, textAlign: 'right', fontSize: '1.2rem' } : {}}>QTY</span>
           {!data.isKOT && <span className="thermal-col-rate">RATE</span>}
           {!data.isKOT && <span className="thermal-col-total">AMT</span>}
         </div>
@@ -111,9 +111,9 @@ export const ThermalReceipt: React.FC<ThermalReceiptProps> = ({ data, settings: 
         <div className="thermal-divider" />
 
         {calculatedItems.map((item, index) => (
-          <div key={index} className="thermal-item-row" style={data.isKOT ? {fontSize: '1.2rem', padding: '4px 0'} : {}}>
-            <span className="thermal-col-name font-bold" style={data.isKOT ? {flex: 3, fontWeight: 'bold'} : {}}>{item.name}</span>
-            <span className="thermal-col-qty font-bold" style={data.isKOT ? {flex: 1, textAlign: 'right', fontWeight: 'bold'} : {}}>x{item.qty}</span>
+          <div key={index} className="thermal-item-row" style={data.isKOT ? { fontSize: '1.2rem', padding: '4px 0' } : {}}>
+            <span className="thermal-col-name font-bold" style={data.isKOT ? { flex: 3, fontWeight: 'bold' } : {}}>{item.name}</span>
+            <span className="thermal-col-qty font-bold" style={data.isKOT ? { flex: 1, textAlign: 'right', fontWeight: 'bold' } : {}}>x{item.qty}</span>
             {!data.isKOT && <span className="thermal-col-rate">{item.rate.toFixed(2)}</span>}
             {!data.isKOT && <span className="thermal-col-total">{item.lineTotal.toFixed(2)}</span>}
           </div>

@@ -10,7 +10,7 @@ import { DocumentData, QueryDocumentSnapshot } from "firebase/firestore";
 export function OrderHistoryScreen() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  
+
   const [orders, setOrders] = useState<OrderDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -29,7 +29,7 @@ export function OrderHistoryScreen() {
         ]);
 
         let merged = historyRes.orders;
-        
+
         // If there is an active order and it's not already in history, insert at top
         if (activeOrder) {
           merged = [activeOrder as OrderDoc, ...merged.filter(o => o.id !== activeOrder.id)];
@@ -51,7 +51,7 @@ export function OrderHistoryScreen() {
   // Fetch next batch
   const loadMore = async () => {
     if (!user || !lastDoc || !hasMore) return;
-    
+
     setLoadingMore(true);
     try {
       const { orders: moreOrders, lastDoc: newLastDoc } = await orderService.getOrderHistory(user.uid, lastDoc, 10);
@@ -158,86 +158,84 @@ export function OrderHistoryScreen() {
           <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-6 text-center">
             <p className="text-red-500 font-bold mb-2 uppercase tracking-tight">Access Error</p>
             <p className="text-red-500/70 text-xs leading-relaxed">
-              We couldn't load your order history. This is often caused by a missing Firestore index. 
+              We couldn't load your order history. This is often caused by a missing Firestore index.
               Please check your browser console for a setup link.
             </p>
           </div>
         ) : (
           orders.map((order, index) => {
-          const statusConfig = getStatusConfig(order.status);
-          const StatusIcon = statusConfig.icon;
+            const statusConfig = getStatusConfig(order.status);
+            const StatusIcon = statusConfig.icon;
 
-          return (
-            <motion.div
-              key={order.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: Math.min(index * 0.05, 0.3) }}
-              className={`bg-[#1E2A38] rounded-2xl p-5 border ${
-                order.status === "completed" ? "border-white/10" : "border-gray-600/20"
-              }`}
-            >
-              {/* Order Header */}
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-white text-lg">Order <span className="text-sm bg-white/5 px-1.5 py-0.5 rounded">#{order.id.slice(-4)}</span></h3>
-                    <div
-                      className={`px-2 py-1 rounded-lg ${statusConfig.bgColor} border ${statusConfig.borderColor} flex items-center gap-1`}
-                    >
-                      <StatusIcon className={`w-3 h-3 ${statusConfig.textColor}`} />
-                      <span className={`text-xs ${statusConfig.textColor}`}>
-                        {statusConfig.label}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-gray-400 text-sm mb-1">
-                    <Clock className="w-3 h-3" />
-                    <span>{formatDate(order.createdAt)}</span>
-                  </div>
-                  <p className="text-gray-500 text-xs">{order.slotName} • {order.slotTime}</p>
-                </div>
-                <div className="text-right">
-                  <span className="text-[#FFD54F] text-xl font-medium">₹{order.totalPrice}</span>
-                </div>
-              </div>
-
-              {/* Items List */}
-              <div className="bg-[#121212]/50 rounded-xl p-4 border border-white/5">
-                <h4 className="text-gray-400 text-xs mb-2">Items Ordered</h4>
-                <div className="space-y-1">
-                  {order.items.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-[#FFD54F]" />
-                      <span
-                        className={`text-sm ${
-                          order.status === "completed" ? "text-white" : "text-gray-400"
-                        }`}
+            return (
+              <motion.div
+                key={order.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: Math.min(index * 0.05, 0.3) }}
+                className={`bg-[#1E2A38] rounded-2xl p-5 border ${order.status === "completed" ? "border-white/10" : "border-gray-600/20"
+                  }`}
+              >
+                {/* Order Header */}
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h3 className="text-white text-lg">Order <span className="text-sm bg-white/5 px-1.5 py-0.5 rounded">#{order.id.slice(-4)}</span></h3>
+                      <div
+                        className={`px-2 py-1 rounded-lg ${statusConfig.bgColor} border ${statusConfig.borderColor} flex items-center gap-1`}
                       >
-                        {item.qty}x {item.name}
-                      </span>
+                        <StatusIcon className={`w-3 h-3 ${statusConfig.textColor}`} />
+                        <span className={`text-xs ${statusConfig.textColor}`}>
+                          {statusConfig.label}
+                        </span>
+                      </div>
                     </div>
-                  ))}
+                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-1">
+                      <Clock className="w-3 h-3" />
+                      <span>{formatDate(order.createdAt)}</span>
+                    </div>
+                    <p className="text-gray-500 text-xs">{order.slotName} • {order.slotTime}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[#FFD54F] text-xl font-medium">₹{order.totalPrice}</span>
+                  </div>
                 </div>
-              </div>
 
-              {/* Status Message */}
-              {order.status === "expired" && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.2 }}
-                  className="mt-3 bg-gray-500/10 rounded-lg p-3 border border-gray-500/20"
-                >
-                  <p className="text-gray-400 text-xs text-center">
-                    This order could not be served as the mess slot time ended
-                  </p>
-                </motion.div>
-              )}
-            </motion.div>
-          );
-        })
-      )}
+                {/* Items List */}
+                <div className="bg-[#121212]/50 rounded-xl p-4 border border-white/5">
+                  <h4 className="text-gray-400 text-xs mb-2">Items Ordered</h4>
+                  <div className="space-y-1">
+                    {order.items.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#FFD54F]" />
+                        <span
+                          className={`text-sm ${order.status === "completed" ? "text-white" : "text-gray-400"
+                            }`}
+                        >
+                          {item.qty}x {item.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Status Message */}
+                {order.status === "expired" && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.2 }}
+                    className="mt-3 bg-gray-500/10 rounded-lg p-3 border border-gray-500/20"
+                  >
+                    <p className="text-gray-400 text-xs text-center">
+                      This order could not be served as the mess slot time ended
+                    </p>
+                  </motion.div>
+                )}
+              </motion.div>
+            );
+          })
+        )}
 
         {hasMore && orders.length > 0 && !error && (
           <motion.button

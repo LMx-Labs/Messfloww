@@ -15,7 +15,20 @@ export { processTransaction } from "./transactions/processTransaction";
 export { timeSlotService } from "./services/timeSlotService";
 export { menuService } from "./services/menuService";
 export * from "./services/settingsService";
-export * from "./services/studentService";
+// Explicit exports from studentService to avoid name clash with settingsService (fetchActionPassword)
+export {
+  syncAllStudents,
+  fetchAllStudents,
+  subscribeStudents,
+  batchReplaceStudents,
+  addStudent,
+  updateStudent,
+  deleteStudent,
+  deleteStudentCompletely,
+  getStudentByRegNo,
+  deductStudentBalance,
+  studentService,
+} from "./services/studentService";
 export * from "./services/kotQueueService";
 
 // Utilities

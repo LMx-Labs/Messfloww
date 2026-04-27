@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { ShoppingCart, Users, DollarSign, TrendingUp, Download } from "lucide-react";
 import { Link } from "react-router";
 import { db, rtdb, orderService, timeSlotService } from "@messflow/shared-core";
@@ -105,7 +105,7 @@ export function DashboardPage() {
     let csvContent = "MessFlow Dashboard Report\n";
     csvContent += `Generated: ${new Date().toLocaleString()}\n\n`;
     csvContent += "=== SUMMARY STATISTICS ===\n";
-    stats.forEach(stat => {
+    stats.forEach((stat: { name: string; value: string; icon: React.ElementType; color: string }) => {
       csvContent += `${stat.name},${stat.value}\n`;
     });
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -146,7 +146,7 @@ export function DashboardPage() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat) => (
+        {stats.map((stat: { name: string; value: string; icon: React.ElementType; color: string }) => (
           <div
             key={stat.name}
             className="bg-card rounded-xl p-6 border border-border shadow-sm hover:shadow-md transition-shadow"

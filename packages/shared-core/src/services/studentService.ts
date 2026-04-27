@@ -66,12 +66,12 @@ export const subscribeStudents = (callback: (students: Student[]) => void) => {
 
 export const batchReplaceStudents = async (students: Student[]) => {
   const batch = writeBatch(db);
-  
+
   for (const student of students) {
     const docRef = doc(db, STUDENTS_COLLECTION, student.regNo);
     // Use set with merge: true to preserve any fields not present in the CSV (like 'uid')
     batch.set(docRef, student, { merge: true });
-    
+
     if (student.email) {
       const emailDocId = student.email.toLowerCase().trim();
       const regDocRef = doc(db, REGISTERED_STUDENTS_COLLECTION, emailDocId);
@@ -96,7 +96,7 @@ export const addStudent = async (student: Student) => {
 export const updateStudent = async (regNo: string, data: Partial<Student>) => {
   const docRef = doc(db, STUDENTS_COLLECTION, regNo);
   await updateDoc(docRef, data);
-  
+
   // If email or status changed, sync again
   if (data.email || data.status || data.name) {
     const studentDoc = await getDoc(docRef);
@@ -190,7 +190,7 @@ export const deductStudentBalance = async (
   return { success: true, newBalance };
 };
 
-const fetchActionPassword = async (): Promise<string> => {
+export const fetchActionPassword = async (): Promise<string> => {
   const settingsRef = doc(db, "settings", "security");
   const snap = await getDoc(settingsRef);
   if (snap.exists()) {

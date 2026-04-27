@@ -1,18 +1,4 @@
-declare global {
-  interface ImportMetaEnv {
-    VITE_FIREBASE_API_KEY: string;
-    VITE_FIREBASE_AUTH_DOMAIN: string;
-    VITE_FIREBASE_PROJECT_ID: string;
-    VITE_FIREBASE_STORAGE_BUCKET: string;
-    VITE_FIREBASE_MESSAGING_SENDER_ID: string;
-    VITE_FIREBASE_APP_ID: string;
-    VITE_FIREBASE_MEASUREMENT_ID: string;
-    VITE_FIREBASE_DATABASE_URL: string;
-  }
-  interface ImportMeta {
-    readonly env: ImportMetaEnv;
-  }
-}
+/// <reference types="vite/client" />
 import { initializeApp, FirebaseApp } from "firebase/app";
 import { getAuth, Auth, setPersistence, browserLocalPersistence, GoogleAuthProvider } from "firebase/auth";
 import { getDatabase, Database } from "firebase/database";
