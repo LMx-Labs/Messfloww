@@ -1,49 +1,101 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Helper: signed in
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Helper: read roles doc if it exists
+    function getRoles() {
+      let path = /databases/$(database)/documents/app_config/roles;
+      return exists(path) ? get(path).data : null;
+    }
+
+    // Staff = any authorised admin email
+    function isStaff() {
+      let email = request.auth.token.email.lower();
+      let roles = getRoles();
+      return isAuth() && (
+        email == "lakshya.pms@gmail.com" ||
+        email == "samnagar@gmail.com" ||
+        (roles != null && (
+          (roles.authorized_admins != null && email in roles.authorized_admins) ||
+          email == roles.staff_email.lower() ||
+          email == roles.manager_email.lower()
+        ))
+      );
+    }
+
     // Users — own document only
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // Students — read if authenticated, write via Admin SDK only
+    // Students — read if authenticated, write via Staff/Admin
     match /students/{regNo} {
-      allow read: if request.auth != null;
-      allow write: if false;
+      allow read: if isAuth();
+      allow write: if isStaff();
     }
 
-    // Registered students registry — read if authenticated, write via Admin SDK only
+    // Registered students registry
     match /registered_students/{email} {
-      allow read: if request.auth != null;
-      allow write: if false;
+      allow read: if isAuth();
+      allow write: if isStaff();
     }
 
-    // Ledger — read own records only, write via Admin SDK
+    // Ledger — read own records only, write via Staff
     match /ledger/{docId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.studentUid;
-      allow write: if false;
+      allow read: if isAuth() && (isStaff() || request.auth.uid == resource.data.studentUid);
+      allow write: if isStaff();
     }
 
-    // Historical orders — read own orders only, write via Admin SDK
+    // Historical orders — read own orders only, write via Staff
     match /historical_orders/{orderId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
-      allow write: if false;
+      allow read: if isAuth() && (isStaff() || request.auth.uid == resource.data.userId);
+      allow write: if isStaff();
     }
 
-    // Menu — read if authenticated, write via Admin SDK
+    // Menu — public read, staff write
     match /menu/{docId} {
-      allow read: if request.auth != null;
-      allow write: if false;
+      allow read: if true;
+      allow write: if isStaff();
     }
 
-    // Settings — read if authenticated, no client write
+    // Settings — read if authenticated, write by staff
     match /settings/{docId} {
-      allow read: if request.auth != null;
-      allow write: if false;
+      allow read: if true;
+      allow write: if isStaff();
     }
 
-    // Order counters — Admin SDK only
+    // Time Slots — read if authenticated, write by staff
+    match /timeSlots/{docId} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    // App config (roles, passwords) — read by authenticated, write by staff
+    match /app_config/{docId} {
+      allow read: if isAuth();
+      allow write: if isStaff();
+    }
+
+    // Order counters — authenticated read/write (needed for order numbering)
     match /orderCounters/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    // Orders
+    match /orders/{orderId} {
+      allow create: if isAuth();
+      allow read: if isAuth();
+      allow update: if isStaff() || (isAuth() && request.auth.uid == resource.data.userId);
+      allow delete: if isStaff();
+    }
+
+    // Catch-all deny
+    match /{document=**} {
       allow read, write: if false;
     }
   }

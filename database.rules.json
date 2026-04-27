@@ -27,11 +27,13 @@
     },
     "system_status": {
       ".read": "auth != null",
-      ".write": false
+      "admin_online": {
+        ".write": "auth != null"
+      }
     },
     "mess_status": {
       ".read": "auth != null",
-      ".write": false
+      ".write": "auth != null"
     },
     "sessions": {
       "$uid": {
