@@ -234,8 +234,14 @@ export function ExternalOrderPage() {
                 return (
                   <button key={item.id} onClick={() => addToCart(item)} className="bg-card hover:bg-primary hover:text-primary-foreground group text-foreground rounded-xl p-4 border border-border transition-all text-left shadow-sm active:scale-95 h-full flex flex-col justify-between">
                     <div>
-                      <div className="font-bold mb-1">{item.name}</div>
-                      <div className="text-sm opacity-70 mb-2">{item.category}</div>
+                      <div className="font-bold mb-1">
+                        {item.name}
+                        {item.servingSize && item.quantityUnit && (
+                          <span className="ml-2 text-xs opacity-80 font-normal">({item.servingSize} {item.quantityUnit})</span>
+                        )}
+                      </div>
+                      {item.description && <div className="text-[10px] opacity-70 mb-1 leading-tight line-clamp-2">{item.description}</div>}
+                      <div className="text-xs font-semibold opacity-70 mb-2">{item.category}</div>
                     </div>
                     <div>
                       <div className="font-bold text-lg">{item.isMRP ? `MRP ₹${item.price}` : `₹${item.price}`}</div>

@@ -387,7 +387,16 @@ export function HomeScreen() {
                       return (
                         <MenuItem 
                           key={item.id} 
-                          item={{ ...item, stock: stockStatus }} 
+                          item={{ 
+                            id: item.id, 
+                            name: item.name, 
+                            price: item.price, 
+                            available: item.available, 
+                            stock: stockStatus,
+                            description: item.description,
+                            servingSize: item.servingSize,
+                            quantityUnit: item.quantityUnit
+                          }} 
                           onAdd={addToCart} 
                           isRestricted={userProfile?.status === 'disabled'}
                           isUnregistered={!userProfile?.isRegistered}

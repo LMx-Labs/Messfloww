@@ -76,14 +76,15 @@ export function mapOrderToKOTs(order: any, allMenuItems: any[]): BillDocument[] 
     if (existing) {
       existing.qty += (item.qty || 1);
     } else {
-      groups[category].push({ ...item, qty: item.qty || 1 });
+      const unitStr = menuItem?.servingSize && menuItem?.quantityUnit ? ` (${menuItem.servingSize} ${menuItem.quantityUnit})` : '';
+      groups[category].push({ ...item, qty: item.qty || 1, _unitLabel: unitStr });
     }
   }
 
   // Generate a distinct KOT for each category
   return Object.entries(groups).map(([category, items]) => {
     const mappedItems: BillItem[] = items.map(item => ({
-      name: item.name.toUpperCase(),
+      name: `${item.name.toUpperCase()}${item._unitLabel || ''}`,
       qty: item.qty,
       rate: 0,
       gstPercentage: 0

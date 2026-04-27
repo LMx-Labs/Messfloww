@@ -83,6 +83,8 @@ export interface TimeSlot {
 }
 
 // ── Inventory ──
+export type QuantityUnit = "pcs" | "ml" | "g" | "plate" | "bowl" | "cup" | "half" | "full" | "roll" | "slice" | "nos";
+
 export interface InventoryItem {
   id: number;
   name: string;
@@ -98,6 +100,9 @@ export interface InventoryItem {
   gst: number;
   isMRP: boolean;
   cost?: number;
+  description?: string;
+  quantityUnit?: QuantityUnit;
+  servingSize?: number;
 }
 
 // Alias for backward compat

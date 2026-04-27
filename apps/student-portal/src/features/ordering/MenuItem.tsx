@@ -8,6 +8,9 @@ interface MenuItemProps {
     price: number;
     available: boolean;
     stock: "high" | "low" | "out";
+    description?: string;
+    servingSize?: number;
+    quantityUnit?: string;
   };
   onAdd: (item: { id: number; name: string; price: number }) => void;
   isRestricted?: boolean;
@@ -36,7 +39,13 @@ export function MenuItem({ item, onAdd, isRestricted, isUnregistered }: MenuItem
     >
       <div className="flex items-center justify-between">
         <div className="flex-1">
-          <h3 className="text-white mb-1">{item.name}</h3>
+          <h3 className="text-white mb-1">
+            {item.name}
+            {item.servingSize && item.quantityUnit && (
+              <span className="ml-2 text-xs text-gray-400 font-normal">({item.servingSize} {item.quantityUnit})</span>
+            )}
+          </h3>
+          {item.description && <p className="text-[10px] text-gray-400 mb-1.5 leading-tight line-clamp-2">{item.description}</p>}
           <div className="flex items-center gap-3">
             <span className={`${
               isUnavailable 

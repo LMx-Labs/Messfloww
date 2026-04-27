@@ -15,7 +15,7 @@ import {
 import * as Tabs from "@radix-ui/react-tabs";
 import * as Switch from "@radix-ui/react-switch";
 import { useMenu } from "../../features/menu/MenuContext";
-import { menuService, stockService, MealType, MenuItem } from "@messflow/shared-core";
+import { menuService, stockService, MealType, MenuItem, QuantityUnit } from "@messflow/shared-core";
 import { parseMenuCSV, downloadMenuTemplate, CSVParseResult } from "../../app/utils/csvParser";
 import { EmptyState } from "../../app/components/EmptyState";
 import { useAuth } from "../../core/auth/AuthContext";
@@ -62,6 +62,9 @@ export function MenuPage() {
   const [itemIsMRP, setItemIsMRP] = useState(false);
   const [itemStock, setItemStock] = useState("0");
   const [itemMinStock, setItemMinStock] = useState("0");
+  const [itemDescription, setItemDescription] = useState("");
+  const [itemServingSize, setItemServingSize] = useState("");
+  const [itemQuantityUnit, setItemQuantityUnit] = useState<QuantityUnit>("pcs");
   
   const [stockValue, setStockValue] = useState("");
   const [minStockValue, setMinStockValue] = useState("");
@@ -102,6 +105,9 @@ export function MenuPage() {
     setEditingItemId(null);
     setItemStock("0");
     setItemMinStock("0");
+    setItemDescription("");
+    setItemServingSize("");
+    setItemQuantityUnit("pcs");
   };
 
   const handleConfirmAddItem = async () => {
@@ -123,6 +129,9 @@ export function MenuPage() {
         initialStock: nStock,
         minStock: nMinStock,
         lowStockAlert: false,
+        description: itemDescription.trim() || undefined,
+        servingSize: itemServingSize ? parseFloat(itemServingSize) : undefined,
+        quantityUnit: itemQuantityUnit || undefined,
       };
       await menuService.addMenuItem(newItem);
       await stockService.setMenuStock(newItem.id, {
@@ -143,6 +152,9 @@ export function MenuPage() {
     setItemIsVeg(item.isVeg);
     setItemGst(item.gst.toString());
     setItemIsMRP(item.isMRP);
+    setItemDescription(item.description || "");
+    setItemServingSize(item.servingSize?.toString() || "");
+    setItemQuantityUnit(item.quantityUnit || "pcs");
     setShowEditModal(true);
   };
 
@@ -154,7 +166,10 @@ export function MenuPage() {
           isVeg: itemIsVeg, 
           category: itemCategory,
           gst: parseInt(itemGst) || 0,
-          isMRP: itemIsMRP
+          isMRP: itemIsMRP,
+          description: itemDescription.trim() || undefined,
+          servingSize: itemServingSize ? parseFloat(itemServingSize) : undefined,
+          quantityUnit: itemQuantityUnit || undefined,
       });
       setShowEditModal(false);
       resetForm();
@@ -408,7 +423,12 @@ export function MenuPage() {
                     </span>
                   </div>
 
-                  <h3 className="text-xl font-bold text-foreground mb-1">{item.name}</h3>
+                  <h3 className="text-xl font-bold text-foreground mb-1">
+                    {item.name}
+                    {item.servingSize && item.quantityUnit && (
+                      <span className="ml-2 text-sm text-muted-foreground font-medium">({item.servingSize} {item.quantityUnit})</span>
+                    )}
+                  </h3>
                   <div className="flex items-center gap-2 mb-4">
                     <div className="flex flex-col">
                       <p className="text-2xl font-bold text-foreground">
@@ -530,6 +550,38 @@ export function MenuPage() {
                     </Switch.Root>
                     <span className="text-sm">Yes</span>
                   </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-foreground mb-2">Description <span className="text-muted-foreground font-normal">(Optional)</span></label>
+                <textarea 
+                  value={itemDescription} 
+                  onChange={(e) => setItemDescription(e.target.value)} 
+                  placeholder="e.g. Fresh mango blended with milk" 
+                  maxLength={120}
+                  className="w-full bg-input-background text-foreground px-4 py-3 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary min-h-[80px]" 
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-foreground mb-2">Serving Size</label>
+                  <input type="number" value={itemServingSize} onChange={(e) => setItemServingSize(e.target.value)} placeholder="e.g. 300" className="w-full bg-input-background text-foreground px-4 py-3 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-foreground mb-2">Unit</label>
+                  <select value={itemQuantityUnit} onChange={(e) => setItemQuantityUnit(e.target.value as QuantityUnit)} className="w-full bg-input-background text-foreground px-4 py-3 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary">
+                    <option value="pcs">Pieces (pcs)</option>
+                    <option value="ml">Milliliters (ml)</option>
+                    <option value="g">Grams (g)</option>
+                    <option value="plate">Plate</option>
+                    <option value="bowl">Bowl</option>
+                    <option value="cup">Cup</option>
+                    <option value="half">Half Portion</option>
+                    <option value="full">Full Portion</option>
+                    <option value="roll">Roll</option>
+                    <option value="slice">Slice</option>
+                    <option value="nos">Numbers (nos)</option>
+                  </select>
                 </div>
               </div>
               {showAddModal && (

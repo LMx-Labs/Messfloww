@@ -140,12 +140,20 @@ export function KitchenDisplayPage() {
                   <div className="px-3 py-1 bg-amber-500/10 text-amber-500 rounded-full text-[10px] font-black uppercase tracking-widest">{order.status}</div>
                 </div>
                 <div className="p-5 flex-grow space-y-4">
-                  {order.items.map((item, idx) => (
+                  {order.items.map((item, idx) => {
+                    const menuItem = allMenuItems.find(m => m.id === item.id);
+                    return (
                     <div key={idx} className="flex items-start gap-3">
                       <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center font-black text-primary">{item.qty}</div>
-                      <p className="text-lg font-bold truncate">{item.name}</p>
+                      <div>
+                        <p className="text-lg font-bold truncate">{item.name}</p>
+                        {menuItem?.servingSize && menuItem?.quantityUnit && (
+                          <p className="text-sm text-muted-foreground font-semibold">({menuItem.servingSize} {menuItem.quantityUnit} each)</p>
+                        )}
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="p-4 bg-muted/10 border-t border-border flex gap-3">
                   <button onClick={async () => {
