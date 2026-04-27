@@ -20,7 +20,7 @@ export function KitchenDisplayPage() {
   const [settings, setSettings] = useState<any>(null);
   
   const [menu, setMenu] = useState<Record<string, MenuItem[]>>({});
-  const allMenuItems: MenuItem[] = Object.values(menu).flat();
+  const allMenuItems = Object.values(menu).flat() as MenuItem[];
   
   const routedOrders = useRef<Set<string>>(new Set());
   const autoPrintedOrders = useRef<Set<string>>(new Set());
