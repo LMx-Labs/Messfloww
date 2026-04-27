@@ -33,10 +33,12 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.securePlaceOrder = void 0;
+exports.cancelStalePendingOrders = exports.confirmAndCollectUpiOrder = exports.collectOrder = exports.securePlaceUpiOrder = exports.securePlaceOrder = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const https = __importStar(require("firebase-functions/v2/https"));
+const scheduler_1 = require("firebase-functions/v2/scheduler");
+const crypto_1 = require("crypto");
 /*
 import { transporter, SENDER_EMAIL } from './config/mailer';
 import { getDailyRevenueSummary, getLowStockAlerts } from './services/dataAggregator';
@@ -47,6 +49,26 @@ if (admin.apps.length === 0) {
     admin.initializeApp({
         databaseURL: "https://messfloww-default-rtdb.asia-southeast1.firebasedatabase.app"
     });
+}
+// ─── Module-level menu price cache (persists across warm CF invocations) ────
+let cachedMenu = null;
+let menuCacheExpiry = 0;
+async function getMenuPrices(db) {
+    if (cachedMenu && Date.now() < menuCacheExpiry)
+        return cachedMenu;
+    const snap = await db.collection('menu').get();
+    const priceMap = new Map();
+    snap.docs.forEach(d => {
+        const items = d.data().items || [];
+        items.forEach((item) => priceMap.set(String(item.id), Number(item.price || 0)));
+    });
+    cachedMenu = priceMap;
+    menuCacheExpiry = Date.now() + 5 * 60 * 1000; // 5-minute TTL
+    return cachedMenu;
+}
+/** Generate a cryptographically secure, non-guessable order ID */
+function generateSecureOrderId() {
+    return `MFW-${(0, crypto_1.randomUUID)().replace(/-/g, '').substring(0, 12).toUpperCase()}`;
 }
 /**
  * Hourly Cron Job: Processes active report subscriptions and emails them.
@@ -165,10 +187,8 @@ exports.securePlaceOrder = https.onCall(async (request) => {
         if (isAdminOnline === false) {
             throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
         }
-        // Generate standard order ID
-        const ts = Math.floor(Date.now() / 1000);
-        const shortUid = auth.uid.length >= 4 ? auth.uid.slice(-4).toUpperCase() : auth.uid.padEnd(4, '0').toUpperCase();
-        const orderId = `MFW-${ts}-${shortUid}`;
+        // Generate cryptographically secure, non-guessable order ID
+        const orderId = generateSecureOrderId();
         // Get order counter for today
         const today = new Date().toISOString().split('T')[0];
         const dailyCounterRef = db.doc(`orderCounters/${today}`);
@@ -269,7 +289,8 @@ exports.securePlaceOrder = https.onCall(async (request) => {
                 const newBal = (((_a = studentSnap.data()) === null || _a === void 0 ? void 0 : _a.balance) || 0) - totalPrice;
                 const newCred = (((_b = studentSnap.data()) === null || _b === void 0 ? void 0 : _b.credits) || 0) - totalPrice;
                 transaction.update(result.studentRef, { balance: newBal, credits: newCred });
-                transaction.update(db.collection('users').doc(auth.uid), { walletBalance: newBal });
+                // NOTE: walletBalance sync on users/{uid} intentionally removed — saves 4,500 writes/day.
+                // AuthContext re-fetches balance from students collection on session start.
                 const ledgerRef = db.collection('ledger').doc();
                 transaction.set(ledgerRef, {
                     type: 'purchase',
@@ -348,5 +369,259 @@ exports.securePlaceOrder = https.onCall(async (request) => {
         }
         throw new https.HttpsError('internal', msg);
     }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// securePlaceUpiOrder — Server-side UPI order with price validation
+// ─────────────────────────────────────────────────────────────────────────────
+exports.securePlaceUpiOrder = https.onCall(async (request) => {
+    var _a, _b;
+    const { data, auth } = request;
+    if (!(auth === null || auth === void 0 ? void 0 : auth.uid)) {
+        throw new https.HttpsError('unauthenticated', 'You must be logged in to place an order.');
+    }
+    const { cart, totalPrice: clientTotalPrice, slotName } = data;
+    if (!cart || cart.length === 0 || !slotName) {
+        throw new https.HttpsError('invalid-argument', 'Missing required order fields.');
+    }
+    const db = admin.firestore();
+    const rtdb = admin.database();
+    try {
+        // 1. Kill-switch: verify admin is online
+        const adminOnlineSnap = await rtdb.ref('system_status/admin_online').once('value');
+        if (adminOnlineSnap.val() === false) {
+            throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
+        }
+        // 2. Server-side price validation against Firestore menu (cached)
+        const menuPrices = await getMenuPrices(db);
+        let serverTotalPrice = 0;
+        for (const item of cart) {
+            const canonicalPrice = menuPrices.get(String(item.id));
+            if (canonicalPrice === undefined) {
+                throw new https.HttpsError('invalid-argument', `Unknown menu item: ${item.name}`);
+            }
+            serverTotalPrice += canonicalPrice * item.qty;
+        }
+        // Reject if client price differs by more than ₹1 (spoofing guard)
+        if (Math.abs(clientTotalPrice - serverTotalPrice) > 1) {
+            functions.logger.warn('UPI price spoofing attempt detected', {
+                uid: auth.uid, clientPrice: clientTotalPrice, serverPrice: serverTotalPrice
+            });
+            throw new https.HttpsError('invalid-argument', `Price mismatch: expected ₹${serverTotalPrice}, received ₹${clientTotalPrice}.`);
+        }
+        // 3. Verify student exists and is active
+        const userSnap = await db.collection('users').doc(auth.uid).get();
+        if (!userSnap.exists)
+            throw new https.HttpsError('not-found', 'User profile not found.');
+        const rollNo = (_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.rollNo;
+        if (!rollNo || rollNo === 'UNREGISTERED') {
+            throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order.');
+        }
+        const studentSnap = await db.collection('students').doc(rollNo).get();
+        if (!studentSnap.exists)
+            throw new https.HttpsError('not-found', 'Student record not found.');
+        if (((_b = studentSnap.data()) === null || _b === void 0 ? void 0 : _b.status) === 'disabled') {
+            throw new https.HttpsError('permission-denied', 'Account has been disabled.');
+        }
+        // 4. Atomically decrement RTDB stock (same pattern as securePlaceOrder)
+        const stockReverts = [];
+        for (const item of cart) {
+            const stockRef = rtdb.ref(`menu_stock/${item.id}`);
+            const result = await stockRef.transaction((currentData) => {
+                if (currentData === null)
+                    return currentData;
+                if ((currentData.stock || 0) >= item.qty) {
+                    currentData.stock -= item.qty;
+                    if (currentData.stock <= (currentData.minStock || 0))
+                        currentData.available = false;
+                    return currentData;
+                }
+                return undefined; // Abort
+            });
+            if (!result.committed) {
+                // Revert already-decremented stock
+                for (const revert of stockReverts) {
+                    await revert.ref.transaction((d) => {
+                        if (d !== null) {
+                            d.stock = (d.stock || 0) + revert.qty;
+                            d.available = true;
+                        }
+                        return d;
+                    });
+                }
+                throw new https.HttpsError('resource-exhausted', `Out of stock: ${item.name}`);
+            }
+            stockReverts.push({ ref: stockRef, qty: item.qty });
+        }
+        // 5. Increment daily order counter in Firestore
+        const today = new Date().toISOString().split('T')[0];
+        const dailyCounterRef = db.doc(`orderCounters/${today}`);
+        let orderNumber = 1;
+        await db.runTransaction(async (tx) => {
+            var _a;
+            const counterSnap = await tx.get(dailyCounterRef);
+            orderNumber = (counterSnap.exists ? (((_a = counterSnap.data()) === null || _a === void 0 ? void 0 : _a.count) || 0) : 0) + 1;
+            if (counterSnap.exists) {
+                tx.update(dailyCounterRef, { count: orderNumber });
+            }
+            else {
+                tx.set(dailyCounterRef, { count: orderNumber, date: today });
+            }
+        });
+        // 6. Create order in RTDB via Admin SDK (bypasses client write rules)
+        const orderId = generateSecureOrderId();
+        const now = Date.now();
+        const newOrder = {
+            id: orderId,
+            orderNumber,
+            userId: auth.uid,
+            userRollNo: rollNo,
+            items: cart,
+            totalPrice: serverTotalPrice,
+            slotName,
+            payment_mode: 'upi',
+            status: 'pending',
+            paymentStatus: 'PENDING',
+            qrUsed: false,
+            sync_status: 'cloud',
+            createdAt: new Date(now).toISOString(),
+            timestamp: admin.database.ServerValue.TIMESTAMP,
+        };
+        await rtdb.ref(`active_orders/${orderId}`).set(newOrder);
+        functions.logger.info('UPI order created', { orderId, uid: auth.uid, amount: serverTotalPrice });
+        return { success: true, orderId, orderNumber };
+    }
+    catch (error) {
+        if (error instanceof https.HttpsError)
+            throw error;
+        throw new https.HttpsError('internal', (error === null || error === void 0 ? void 0 : error.message) || 'Failed to place UPI order.');
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// collectOrder — Atomically mark order as collected (replaces client atomicCollectOrder)
+// ─────────────────────────────────────────────────────────────────────────────
+exports.collectOrder = https.onCall(async (request) => {
+    const { data, auth } = request;
+    if (!(auth === null || auth === void 0 ? void 0 : auth.uid)) {
+        throw new https.HttpsError('unauthenticated', 'Authentication required.');
+    }
+    const { orderId } = data;
+    if (!orderId)
+        throw new https.HttpsError('invalid-argument', 'orderId is required.');
+    const rtdb = admin.database();
+    const orderRef = rtdb.ref(`active_orders/${orderId}`);
+    let collectedOrder = null;
+    const txResult = await orderRef.transaction((order) => {
+        if (order === null)
+            return order; // Abort — not found
+        if (order.qrUsed === true) {
+            throw new Error('ORDER_ALREADY_COLLECTED');
+        }
+        if (order.paymentStatus === 'PENDING') {
+            throw new Error('PAYMENT_PENDING');
+        }
+        const terminalStatuses = ['collected', 'expired', 'cancelled'];
+        if (terminalStatuses.includes(order.status)) {
+            throw new Error('ORDER_ALREADY_COLLECTED');
+        }
+        order.qrUsed = true;
+        order.status = 'processing';
+        order.paymentStatus = order.paymentStatus === 'PAID' ? 'PAID' : 'REDEEMED';
+        order.scannedAt = new Date().toISOString();
+        collectedOrder = Object.assign({}, order);
+        return order;
+    });
+    if (!txResult.committed) {
+        throw new https.HttpsError('not-found', 'Order not found.');
+    }
+    functions.logger.info('Order collected', { orderId, uid: auth.uid });
+    return { success: true, order: Object.assign({ id: orderId }, collectedOrder) };
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// confirmAndCollectUpiOrder — Confirm UPI payment + collect in one atomic transaction
+// ─────────────────────────────────────────────────────────────────────────────
+exports.confirmAndCollectUpiOrder = https.onCall(async (request) => {
+    const { data, auth } = request;
+    if (!(auth === null || auth === void 0 ? void 0 : auth.uid)) {
+        throw new https.HttpsError('unauthenticated', 'Authentication required.');
+    }
+    const { orderId } = data;
+    if (!orderId)
+        throw new https.HttpsError('invalid-argument', 'orderId is required.');
+    const rtdb = admin.database();
+    const orderRef = rtdb.ref(`active_orders/${orderId}`);
+    const now = new Date().toISOString();
+    let collectedOrder = null;
+    const txResult = await orderRef.transaction((order) => {
+        if (order === null)
+            return order; // Abort — not found
+        if (order.paymentStatus !== 'PENDING') {
+            throw new Error('PAYMENT_NOT_PENDING');
+        }
+        if (order.qrUsed === true) {
+            throw new Error('ORDER_ALREADY_COLLECTED');
+        }
+        order.paymentStatus = 'PAID';
+        order.qrUsed = true;
+        order.status = 'processing';
+        order.paidAt = now;
+        order.scannedAt = now;
+        collectedOrder = Object.assign({}, order);
+        return order;
+    });
+    if (!txResult.committed) {
+        throw new https.HttpsError('not-found', 'Order not found.');
+    }
+    functions.logger.info('UPI order confirmed and collected', { orderId, uid: auth.uid });
+    return { success: true, order: Object.assign({ id: orderId }, collectedOrder) };
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// cancelStalePendingOrders — Cron: auto-cancel PENDING UPI orders older than 15 min
+// ─────────────────────────────────────────────────────────────────────────────
+exports.cancelStalePendingOrders = (0, scheduler_1.onSchedule)({ schedule: 'every 5 minutes', timeZone: 'Asia/Kolkata' }, async () => {
+    const rtdb = admin.database();
+    const firestoreDb = admin.firestore();
+    const cutoffMs = Date.now() - 15 * 60 * 1000; // 15 minutes ago
+    const snap = await rtdb.ref('active_orders').once('value');
+    if (!snap.exists()) {
+        functions.logger.info('cancelStalePendingOrders: no active orders.');
+        return;
+    }
+    const staleOrders = [];
+    snap.forEach((child) => {
+        const order = child.val();
+        if ((order === null || order === void 0 ? void 0 : order.paymentStatus) === 'PENDING' &&
+            new Date(order.createdAt).getTime() < cutoffMs) {
+            staleOrders.push(Object.assign({ id: child.key }, order));
+        }
+    });
+    if (staleOrders.length === 0) {
+        functions.logger.info('cancelStalePendingOrders: no stale orders.');
+        return;
+    }
+    for (const order of staleOrders) {
+        try {
+            // 1. Revert stock atomically per item
+            for (const item of order.items || []) {
+                await rtdb.ref(`menu_stock/${item.id}`).transaction((stock) => {
+                    if (!stock)
+                        return stock;
+                    stock.stock = (stock.stock || 0) + item.qty;
+                    if (stock.stock > (stock.minStock || 0))
+                        stock.available = true;
+                    return stock;
+                });
+            }
+            // 2. Archive to Firestore
+            const cancelledOrder = Object.assign(Object.assign({}, order), { status: 'expired', paymentStatus: 'CANCELLED', cancelledAt: new Date().toISOString(), cancelReason: 'auto_expired_15min', archivedAt: new Date().toISOString() });
+            await firestoreDb.collection('historical_orders').doc(order.id).set(cancelledOrder);
+            // 3. Remove from RTDB
+            await rtdb.ref(`active_orders/${order.id}`).remove();
+            functions.logger.info('Auto-cancelled stale order', { orderId: order.id });
+        }
+        catch (err) {
+            functions.logger.error('Failed to cancel order', { orderId: order.id, err });
+        }
+    }
+    functions.logger.info(`cancelStalePendingOrders: cancelled ${staleOrders.length} orders.`);
 });
 //# sourceMappingURL=index.js.map

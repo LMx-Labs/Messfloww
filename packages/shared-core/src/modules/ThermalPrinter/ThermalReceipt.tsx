@@ -1,5 +1,5 @@
 import React from 'react';
-import { BillDocument, BillItem, ReceiptSettings } from './types';
+import { BillDocument, ReceiptSettings } from './types';
 import './ThermalReceipt.css';
 
 interface ThermalReceiptProps {

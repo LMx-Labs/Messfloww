@@ -16,6 +16,7 @@ import {
   TimeSlot,
   kotQueueService
 } from "@messflow/shared-core";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { toast } from "sonner";
 
 export function BarcodeScanPage() {
@@ -42,37 +43,11 @@ export function BarcodeScanPage() {
     
     fetchSettings().then(setSettings);
 
-    const checkQueueAndSync = async () => {
-      const queue = JSON.parse(localStorage.getItem('offlineScanQueue') || '[]');
-      if (queue.length > 0) {
-        toast.info(`Syncing ${queue.length} offline scans...`);
-        let syncedCount = 0;
-        const newQueue: string[] = [];
-        
-        for (const scanStr of queue) {
-          try {
-            await orderService.atomicCollectOrder(scanStr);
-            syncedCount++;
-          } catch (e) {
-             // Maybe already processed or permanently failed, could keep or drop. Let's drop to prevent infinite loop.
-          }
-        }
-        localStorage.setItem('offlineScanQueue', JSON.stringify(newQueue));
-        if (syncedCount > 0) toast.success(`Synced ${syncedCount} offline scans!`);
-      }
-    };
-
-    const handleOnline = () => {
-      setIsOffline(false);
-      checkQueueAndSync();
-    };
+    const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
-    // Initial check
-    if (navigator.onLine) checkQueueAndSync();
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -101,22 +76,15 @@ export function BarcodeScanPage() {
       const parsedQR = parseQRCodeValue(trimmed);
       let orderId = parsedQR ? parsedQR.orderId : trimmed;
 
-      let activeOrder = null;
-      
       if (isOffline) {
-        const cache = JSON.parse(localStorage.getItem('offline_orders_cache') || '[]');
-        activeOrder = cache.find((o: any) => o.id === orderId || o.orderNumber?.toString() === orderId || o.userRollNo === orderId);
-        if (activeOrder) orderId = activeOrder.id;
-      } else {
-        activeOrder = await orderService.getActiveOrderById(orderId);
-        
-        if (!activeOrder && !parsedQR) {
-          activeOrder = await orderService.getActiveOrderSearchFallback(trimmed);
-          if (activeOrder) {
-            orderId = activeOrder.id;
-          }
-        }
+        throw new Error("Network required to verify order — please reconnect.");
       }
+
+      const functions = getFunctions(db.app);
+      const collectOrderCF = httpsCallable(functions, 'collectOrder');
+
+      // Fetch order once to check local status (UI-only validation)
+      const activeOrder = await orderService.getActiveOrderById(orderId);
       
       if (activeOrder) {
         if (!parsedQR && trimmed.startsWith('MESSFLOWW|')) {
@@ -138,28 +106,10 @@ export function BarcodeScanPage() {
           return;
         }
 
-        let collectedOrder;
-        
-        if (isOffline) {
-          collectedOrder = { ...activeOrder, status: 'processing', qrUsed: true, autoPrint: true };
-          // Mark locally in cache so we don't scan it twice offline
-          const cache = JSON.parse(localStorage.getItem('offline_orders_cache') || '[]');
-          const idx = cache.findIndex((o: any) => o.id === orderId);
-          if (idx >= 0) {
-            cache[idx] = collectedOrder;
-            localStorage.setItem('offline_orders_cache', JSON.stringify(cache));
-          }
-
-          const queue = JSON.parse(localStorage.getItem('offlineScanQueue') || '[]');
-          if (!queue.includes(orderId)) {
-             queue.push(orderId);
-             localStorage.setItem('offlineScanQueue', JSON.stringify(queue));
-          }
-          toast.success("Offline Scan Saved! Printing locally...");
-        } else {
-          collectedOrder = await orderService.atomicCollectOrder(orderId);
-          collectedOrder.autoPrint = true; // Flag for KDS auto-print
-        }
+        // Call the secure Cloud Function for collection
+        const result = await collectOrderCF({ orderId: activeOrder.id });
+        const { order: collectedOrder } = result.data as any;
+        collectedOrder.autoPrint = true; // Flag for KDS auto-print
 
         setSuccessFlash(true);
         setTimeout(() => setSuccessFlash(false), 1500);
@@ -201,18 +151,9 @@ export function BarcodeScanPage() {
       }
     } catch (e: any) {
       console.error("Scan failed", e);
-      if (isOffline || e.message?.includes('network')) {
-         const queue = JSON.parse(localStorage.getItem('offlineScanQueue') || '[]');
-         const parsedId = parseQRCodeValue(trimmed)?.orderId || trimmed;
-         queue.push(parsedId);
-         localStorage.setItem('offlineScanQueue', JSON.stringify(queue));
-         toast.success("Saved scan offline! Will sync when reconnected.");
-         setError(""); // Don't show error if we handled it via offline queue
-      } else {
-         setError(e.message || "Error finding order");
-         setErrorFlash(true);
-         setTimeout(() => setErrorFlash(false), 1500);
-      }
+      setError(e.message || "Error finding order");
+      setErrorFlash(true);
+      setTimeout(() => setErrorFlash(false), 1500);
     } finally {
       scanningRef.current = false;
       setScanning(false);
@@ -278,8 +219,11 @@ export function BarcodeScanPage() {
 
   const handleConfirmPaymentAndPrint = async (orderId: string) => {
     try {
-      await orderService.confirmUpiPayment(orderId);
-      const collectedOrder = await orderService.atomicCollectOrder(orderId);
+      const functions = getFunctions(db.app);
+      const confirmAndCollectCF = httpsCallable(functions, 'confirmAndCollectUpiOrder');
+      
+      const result = await confirmAndCollectCF({ orderId });
+      const { order: collectedOrder } = result.data as any;
       collectedOrder.autoPrint = true;
       
       setSuccessFlash(true);

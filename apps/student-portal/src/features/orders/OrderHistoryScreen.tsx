@@ -117,7 +117,7 @@ export function OrderHistoryScreen() {
     }
   };
 
-  const formatDate = (isoString: string) => {
+  const formatDate = (isoString: string | number) => {
     const date = new Date(isoString);
     return date.toLocaleDateString("en-IN", {
       month: "short",

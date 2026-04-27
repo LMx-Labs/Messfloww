@@ -4,8 +4,9 @@ import {
   QueryDocumentSnapshot,
   startAfter, getDoc
 } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { db, orderService as sharedOrderService } from "@messflow/shared-core";
-import { OrderItem, OrderStatus, OrderDoc, MealSlot, processTransaction } from "@messflow/shared-core";
+import { OrderItem, OrderStatus, OrderDoc, MealSlot } from "@messflow/shared-core";
 
 export type { OrderItem, OrderStatus, OrderDoc, MealSlot };
 
@@ -24,50 +25,30 @@ export const orderService = {
   },
 
   /**
-   * Places a UPI order without deducting credits, but holds stock atomically.
+   * Places a UPI order via the securePlaceUpiOrder Cloud Function.
+   * Server validates price against Firestore menu and creates order via Admin SDK.
    * Order goes to PENDING state waiting for staff confirmation.
    */
   async placeUpiOrder(
-    userId: string,
-    userRollNo: string,
+    _userId: string,
+    _userRollNo: string,
     items: OrderItem[],
     totalPrice: number,
     slotInfo: MealSlot
   ): Promise<{ id: string, orderNumber: number }> {
-    const transactionInput = {
-      userId,
-      items,
-      totalPrice
-    };
-    
-    const result = await processTransaction(transactionInput);
-    if (!result.success) {
-      throw new Error(`Failed to place order: Items out of stock (${result.failedItem})`);
-    }
+    const functions = getFunctions(db.app);
+    const securePlaceUpiOrder = httpsCallable(functions, 'securePlaceUpiOrder');
 
-    const { generateOrderID } = await import("@messflow/shared-core");
-    const orderId = generateOrderID(userId);
-    const orderNumber = Date.now() % 1000;
-    
-    const newOrder = {
-      id: orderId,
-      userId,
-      userRollNo,
-      items: items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
+    const result = await securePlaceUpiOrder({
+      cart: items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
       totalPrice,
-      status: "pending",
-      payment_mode: "upi",
-      paymentStatus: "PENDING",
       slotName: slotInfo.name,
-      orderNumber,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      autoPrint: false
-    };
+    });
 
-    await sharedOrderService.pushActiveOrder(newOrder);
+    const data = result.data as { success: boolean; orderId: string; orderNumber: number };
+    if (!data.success) throw new Error('UPI order rejected by server.');
 
-    return { id: orderId, orderNumber };
+    return { id: data.orderId, orderNumber: data.orderNumber };
   },
 
   /**

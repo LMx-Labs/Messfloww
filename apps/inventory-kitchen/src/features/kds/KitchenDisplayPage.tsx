@@ -5,7 +5,7 @@ import {
   menuService, 
   kotQueueService, 
   fetchSettings, 
-  printReceipt, 
+  printReceiptSilent, 
   mapOrderToKOTs,
   Order,
   MenuItem
@@ -62,7 +62,7 @@ export function KitchenDisplayPage() {
           .filter(o => o.autoPrint && !autoPrintedOrders.current.has(o.id))
           .forEach(order => {
             autoPrintedOrders.current.add(order.id);
-            printReceipt(mapOrderToKOTs(order as any, allMenuItems), settings);
+            printReceiptSilent(mapOrderToKOTs(order as any, allMenuItems), settings);
           });
       }
       
@@ -149,7 +149,7 @@ export function KitchenDisplayPage() {
                 </div>
                 <div className="p-4 bg-muted/10 border-t border-border flex gap-3">
                   <button onClick={async () => {
-                    printReceipt(mapOrderToKOTs(order as any, allMenuItems), settings);
+                    printReceiptSilent(mapOrderToKOTs(order as any, allMenuItems), settings);
                     await orderService.updateOrderStatus(order.id, 'status', 'preparing');
                   }} className="flex-1 py-3 bg-indigo-500/10 text-indigo-500 rounded-xl font-bold text-sm">Print</button>
                   <button onClick={() => markAsReady(order.id, order.orderNumber!)} className="flex-1 py-3 bg-accent text-accent-foreground rounded-xl font-bold text-sm">Ready</button>

@@ -6,7 +6,7 @@ import {
   orderService, 
   timeSlotService, 
   fetchSettings, 
-  printReceipt, 
+  printReceiptSilent, 
   mapOrderToBill, 
   Order,
   TimeSlot
@@ -66,7 +66,7 @@ export function LiveOrdersPage() {
     // Attempt dual print (Bill + KOT)
     // LiveOrdersPage doesn't inject useMenu yet, but it might not explicitly need categories if we pass an empty array, 
     // it defaults to 'UNCATEGORIZED'. For now, let's just print receipt.
-    printReceipt(mapOrderToBill(order, undefined), settings);
+    printReceiptSilent(mapOrderToBill(order, undefined), settings);
   };
   
   const downloadLiveOrdersReport = () => {

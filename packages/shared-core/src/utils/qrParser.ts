@@ -1,11 +1,11 @@
 /**
- * Generate a standard Order ID
- * Format: MFW-[UnixTimestamp]-[UserShortUID]
+ * Generate a cryptographically secure, non-guessable Order ID.
+ * Format: MFW-[12-char-hex] e.g. MFW-A3F9C2B48E17
+ * The _userId param is kept for backward-compatibility but is no longer used.
  */
-export function generateOrderID(userId: string): string {
-  const ts = Math.floor(Date.now() / 1000);
-  const shortUid = userId.length >= 4 ? userId.slice(-4).toUpperCase() : userId.padEnd(4, '0').toUpperCase();
-  return `MFW-${ts}-${shortUid}`;
+export function generateOrderID(_userId?: string): string {
+  const uuid = crypto.randomUUID().replace(/-/g, '').substring(0, 12).toUpperCase();
+  return `MFW-${uuid}`;
 }
 
 /**

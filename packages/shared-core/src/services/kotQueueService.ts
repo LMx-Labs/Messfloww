@@ -168,7 +168,7 @@ export const kotQueueService = {
     });
 
     // Enqueue KOTs for each counter that has items
-    const promises = Object.entries(itemsByCounter).map(async ([counterId, items]) => {
+    const promises: Promise<void>[] = Object.entries(itemsByCounter).map(async ([counterId, items]) => {
       const kotId = this.generateKOTId(order.id, counterId);
       const kotData = {
         orderId: order.id,
@@ -188,21 +188,23 @@ export const kotQueueService = {
 
     // Handle items that didn't match any counter
     if (uncategorizedItems.length > 0) {
-      const kotId = this.generateKOTId(order.id, 'uncategorized');
-      const kotData = {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        externalLabel: order.externalLabel,
-        userRollNo: order.userRollNo,
-        items: uncategorizedItems.map(i => ({
-          name: i.name.toUpperCase(),
-          qty: i.qty
-        })),
-        slotName: order.slotName,
-        createdAt: order.createdAt,
-        isUncategorized: true
-      };
-      await this.pushKOTToQueue('uncategorized', kotId, kotData, order.autoPrint);
+      promises.push((async () => {
+        const kotId = this.generateKOTId(order.id, 'uncategorized');
+        const kotData = {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          externalLabel: order.externalLabel,
+          userRollNo: order.userRollNo,
+          items: uncategorizedItems.map(i => ({
+            name: i.name.toUpperCase(),
+            qty: i.qty
+          })),
+          slotName: order.slotName,
+          createdAt: order.createdAt,
+          isUncategorized: true
+        };
+        await this.pushKOTToQueue('uncategorized', kotId, kotData, order.autoPrint);
+      })());
     }
 
     await Promise.all(promises);

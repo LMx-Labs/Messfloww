@@ -1,8 +1,50 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+    // Users — own document only
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Students — read if authenticated, write via Admin SDK only
+    match /students/{regNo} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Registered students registry — read if authenticated, write via Admin SDK only
+    match /registered_students/{email} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Ledger — read own records only, write via Admin SDK
+    match /ledger/{docId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.studentUid;
+      allow write: if false;
+    }
+
+    // Historical orders — read own orders only, write via Admin SDK
+    match /historical_orders/{orderId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow write: if false;
+    }
+
+    // Menu — read if authenticated, write via Admin SDK
+    match /menu/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Settings — read if authenticated, no client write
+    match /settings/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Order counters — Admin SDK only
+    match /orderCounters/{docId} {
+      allow read, write: if false;
     }
   }
 }

@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, query, where, runTransaction } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { Student } from "../types";
 
@@ -167,30 +167,30 @@ export const deductStudentBalance = async (
   regNo: string,
   amount: number
 ): Promise<{ success: boolean; newBalance: number }> => {
-  const docRef = doc(db, STUDENTS_COLLECTION, regNo);
-  const snap = await getDoc(docRef);
-  if (!snap.exists()) throw new Error("Student not found");
+  const studentRef = doc(db, STUDENTS_COLLECTION, regNo);
+  let newBalance = 0;
 
-  const student = snap.data();
-  const currentBalance = student.balance || 0;
-  if (currentBalance < amount) throw new Error("Insufficient balance");
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(studentRef);
+    if (!snap.exists()) throw new Error("Student not found");
 
-  const newBalance = currentBalance - amount;
-  await updateDoc(docRef, { balance: newBalance, credits: newBalance });
+    const student = snap.data();
+    const currentBalance = student.balance || 0;
+    if (currentBalance < amount) throw new Error("Insufficient balance");
 
-  if (student.uid) {
-    try {
-      const userDocRef = doc(db, "users", student.uid);
-      await updateDoc(userDocRef, { walletBalance: newBalance });
-    } catch (e) {
-      console.warn("Could not sync balance to users collection:", e);
-    }
-  }
+    newBalance = currentBalance - amount;
+
+    // Update student balance atomically — both fields in one write
+    transaction.update(studentRef, { balance: newBalance, credits: newBalance });
+
+    // NOTE: walletBalance sync on users/{uid} removed — saves Firestore writes.
+    // AuthContext re-fetches balance from students collection on session start.
+  });
 
   return { success: true, newBalance };
 };
 
-export const fetchActionPassword = async (): Promise<string> => {
+const fetchActionPassword = async (): Promise<string> => {
   const settingsRef = doc(db, "settings", "security");
   const snap = await getDoc(settingsRef);
   if (snap.exists()) {

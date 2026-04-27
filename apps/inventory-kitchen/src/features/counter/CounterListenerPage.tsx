@@ -16,7 +16,7 @@ import { motion } from "motion/react";
 import { 
   kotQueueService, 
   fetchSettings, 
-  printReceipt, 
+  printReceiptSilent, 
   mapQueuedKOTToBill 
 } from "@messflow/shared-core";
 import { toast } from "sonner";
@@ -126,7 +126,7 @@ export function CounterListenerPage() {
             setTimeout(async () => {
               processedKots.current.add(kot.id);
               try {
-                printReceipt(mapQueuedKOTToBill(kot, counter.name), settings);
+                printReceiptSilent(mapQueuedKOTToBill(kot, counter.name), settings);
                 await kotQueueService.markKOTPrinted(counterId, kot.id);
                 toast.success(`Printed KOT #${kot.orderNumber}`);
               } catch (e) {
@@ -177,7 +177,7 @@ export function CounterListenerPage() {
               {kots.filter(k => k.status === 'pending').map(kot => (
                 <div key={kot.id} className="bg-muted/30 border border-border rounded-2xl p-5 flex items-center justify-between">
                   <div><span className="text-3xl font-black">#{kot.orderNumber}</span><p className="text-xs text-muted-foreground">{kot.items.map((i: any) => `${i.qty}x ${i.name}`).join(', ')}</p></div>
-                  <button onClick={() => printReceipt(mapQueuedKOTToBill(kot, counter.name), settings)} className="p-3 bg-primary text-primary-foreground rounded-xl"><Printer className="w-5 h-5" /></button>
+                  <button onClick={() => printReceiptSilent(mapQueuedKOTToBill(kot, counter.name), settings)} className="p-3 bg-primary text-primary-foreground rounded-xl"><Printer className="w-5 h-5" /></button>
                 </div>
               ))}
               {kots.filter(k => k.status === 'pending').length === 0 && <div className="py-12 text-center opacity-50"><CheckCircle2 className="w-10 h-10 mx-auto" /><p className="text-xs font-bold uppercase mt-2">All Caught Up</p></div>}

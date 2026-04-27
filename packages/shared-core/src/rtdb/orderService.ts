@@ -6,6 +6,14 @@ import type { OrderItem, MealSlot } from "../types";
 
 export const orderService = {
   // ---- Active Orders ----
+  /**
+   * subscribeActiveOrders: Real-time listener for the active order stream.
+   * ARCHITECTURAL NOTE: 
+   * 1. RTDB single-child filtering is limited; we fetch the full list and sort client-side.
+   * 2. LocalStorage caching ("offline_orders_cache") has been removed to prevent browser bloat 
+   *    and ensure financial integrity by forcing network verification for scans.
+   * 3. Recommended future path: Mirror active_orders to Firestore for better query/indexing.
+   */
   subscribeActiveOrders(callback: (orders: any[]) => void) {
     const activeOrdersRef = ref(rtdb, "active_orders");
     return onValue(activeOrdersRef, (snapshot: any) => {
@@ -20,12 +28,7 @@ export const orderService = {
         return timeB - timeA;
       });
       
-      // Update local storage cache for offline scanning fallback
-      try {
-        localStorage.setItem("offline_orders_cache", JSON.stringify(orders));
-      } catch(e) {
-        console.error("Failed to cache offline orders", e);
-      }
+      // Note: localStorage caching removed to prevent bloat. reliance on real-time RTDB only.
       
       callback(orders);
     });
