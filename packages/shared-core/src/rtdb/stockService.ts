@@ -34,5 +34,24 @@ export const stockService = {
       return currentData;
     });
     return result.snapshot.val();
+  },
+
+  /**
+   * Atomically increment stock — used when reverting a cancelled order.
+   */
+  async incrementStock(itemId: number, quantity: number) {
+    const itemStockRef = ref(rtdb, `menu_stock/${itemId}`);
+    const result = await runTransaction(itemStockRef, (currentData: any) => {
+      if (currentData) {
+        const newStock = (currentData.stock || 0) + quantity;
+        return {
+          ...currentData,
+          stock: newStock,
+          available: newStock > (currentData.minStock || 0)
+        };
+      }
+      return currentData;
+    });
+    return result.snapshot.val();
   }
 };

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ScanBarcode, Check, Printer, AlertCircle, Clock } from "lucide-react";
+import { ScanBarcode, Check, Printer, AlertCircle, Clock, XCircle, Loader2 } from "lucide-react";
 import { Link } from "react-router";
 import { doc, getDoc } from "firebase/firestore";
 import { 
@@ -35,6 +35,7 @@ export function BarcodeScanPage() {
   const [settings, setSettings] = useState<any>(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [printStatus, setPrintStatus] = useState<'idle' | 'printing' | 'error'>('idle');
+  const [isCancellingOrder, setIsCancellingOrder] = useState(false);
 
   useEffect(() => {
     const unsubSlot = timeSlotService.subscribeToActiveSlot(setActiveSlot);
@@ -256,6 +257,20 @@ export function BarcodeScanPage() {
     setError("");
   };
 
+  const handleRejectAndCancel = async () => {
+    if (!scannedOrder || isCancellingOrder) return;
+    setIsCancellingOrder(true);
+    try {
+      await orderService.cancelPendingOrder(scannedOrder.id);
+      toast.success('Order cancelled. Stock restored.');
+      handleNewScan();
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to cancel order.');
+    } finally {
+      setIsCancellingOrder(false);
+    }
+  };
+
   if (!activeSlot) {
     return (
       <div className="max-w-2xl mx-auto space-y-6">
@@ -324,10 +339,12 @@ export function BarcodeScanPage() {
                     <Check className="w-6 h-6" /> Payment Verified
                   </button>
                   <button 
-                    onClick={handleNewScan} 
-                    className="flex-1 bg-muted hover:bg-muted/80 text-foreground px-6 py-4 rounded-xl font-bold text-lg transition-colors"
+                    onClick={handleRejectAndCancel}
+                    disabled={isCancellingOrder}
+                    className="flex-1 bg-destructive/10 hover:bg-destructive/20 text-destructive px-6 py-4 rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                   >
-                    Cancel
+                    {isCancellingOrder ? <Loader2 className="w-5 h-5 animate-spin" /> : <XCircle className="w-6 h-6" />}
+                    No — Not Paid
                   </button>
                 </div>
               </div>

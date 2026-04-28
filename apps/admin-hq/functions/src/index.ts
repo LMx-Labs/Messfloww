@@ -17,20 +17,24 @@ if (admin.apps.length === 0) {
 }
 
 // ─── Module-level menu price cache (persists across warm CF invocations) ────
-let cachedMenu: Map<string, number> | null = null;
+let cachedMenu: Map<string, { price: number; name: string }> | null = null;
 let menuCacheExpiry = 0;
 
-async function getMenuPrices(db: admin.firestore.Firestore): Promise<Map<string, number>> {
-  if (cachedMenu && Date.now() < menuCacheExpiry) return cachedMenu;
+async function getMenuPrices(db: admin.firestore.Firestore): Promise<Map<string, { price: number; name: string }>> {
+  if (cachedMenu && Date.now() < menuCacheExpiry) return cachedMenu as any;
   const snap = await db.collection('menu').get();
-  const priceMap = new Map<string, number>();
+  const priceMap = new Map<string, { price: number; name: string }>();
+  // Each document in the 'menu' collection IS one menu item (not a nested array)
   snap.docs.forEach(d => {
-    const items: any[] = d.data().items || [];
-    items.forEach((item: any) => priceMap.set(String(item.id), Number(item.price || 0)));
+    const data = d.data();
+    const id = data.id !== undefined ? String(data.id) : d.id;
+    const price = Number(data.price || 0);
+    const name = String(data.name || 'Unknown Item');
+    priceMap.set(id, { price, name });
   });
-  cachedMenu = priceMap;
+  cachedMenu = priceMap as any;
   menuCacheExpiry = Date.now() + 5 * 60 * 1000; // 5-minute TTL
-  return cachedMenu;
+  return priceMap;
 }
 
 /** Generate a cryptographically secure, non-guessable order ID */
@@ -42,92 +46,7 @@ function generateSecureOrderId(): string {
  * Hourly Cron Job: Processes active report subscriptions and emails them.
  * Efficiency constraints: Limit queries, optimize sends.
  */
-/*
-export const processSubscriptions = functions.pubsub.schedule('every 1 hours').onRun(async (context: any) => {
-  const db = admin.firestore();
-  
-  // Current hour string matching the format stored in DB: "22:00"
-  // Since server might be UTC, we should either run it in a specific timezone or 
-  // allow the user to define timezone in frontend. For simplicity, we assume UTC matching string.
-  // We'll pad hour: "09:00"
-  const now = new Date();
-  const currentHourString = `${now.getHours().toString().padStart(2, '0')}:00`;
-
-  functions.logger.info(`Running subscription processor at ${currentHourString} (UTC)`);
-
-  try {
-    // 1. Fetch only ACTIVE subscriptions that are due to be sent AT THIS HOUR
-    // This dramatically reduces our read costs.
-    const subsRef = db.collection('report_subscriptions');
-    const q = subsRef
-      .where('enabled', '==', true)
-      // .where('sendTime', '==', currentHourString); // Optional: filter by time inside the query if indexed, or in memory
-      
-    const snapshot = await q.get();
-    
-    if (snapshot.empty) {
-      functions.logger.info("No active subscriptions found for this hour.");
-      return null;
-    }
-
-    // 2. Fetch Aggregated Data ONCE (Singleton pattern) 
-    // instead of fetching per subscription to save read operations
-    const revenueSummary = await getDailyRevenueSummary();
-    const lowStockAlerts = await getLowStockAlerts();
-
-    // 3. Process each subscription
-    const emailPromises: Promise<any>[] = [];
-
-    snapshot.forEach(docSnap => {
-      const sub = docSnap.data();
-      
-      // In-memory filter for time and frequency to avoid complex composite indexes
-      if (sub.sendTime !== currentHourString) return; 
-      
-      // Check frequency (simplified: daily sends every day)
-      if (sub.frequency !== 'daily') {
-         // Logic for weekly/monthly checks would go here based on now.getDay() etc.
-         // functions.logger.info(`Skipping non-daily sub ${docSnap.id}`);
-         // return;
-      }
-
-      // Generate Email HTML
-      const htmlBody = generateReportEmailHTML(
-        "Subscriber", // Ideally, link userId to a users collection to fetch real name
-        revenueSummary,
-        lowStockAlerts
-      );
-
-      // We define mail options
-      const mailOptions = {
-        from: `"MessFlow Analytics" <${SENDER_EMAIL}>`,
-        to: sub.recipients.join(','),
-        subject: `Your MessFlow Daily Report - ${now.toISOString().split('T')[0]}`,
-        html: htmlBody,
-      };
-
-      // Push to promises array for parallel sending
-      emailPromises.push(transporter.sendMail(mailOptions).then(() => {
-        // Update lastSent timestamp
-        return docSnap.ref.update({
-          lastSent: now.toISOString(),
-          updatedAt: now.toISOString()
-        });
-      }));
-    });
-
-    // 4. Await all emails and return
-    await Promise.all(emailPromises);
-    functions.logger.info(`Successfully processed ${emailPromises.length} report subscriptions.`);
-    
-    return null;
-
-  } catch (error) {
-    functions.logger.error("Error processing subscriptions:", error);
-    return null;
-  }
-});
-*/
+// processSubscriptions: removed — email reporting feature not active.
 
 
 
@@ -310,12 +229,25 @@ export const securePlaceOrder = https.onCall(async (request: https.CallableReque
     // Keep it generic or use JS formatting
     const estimatedServingWindow = `${formatter.format(startTimeDate)} - ${formatter.format(endTimeDate)}`;
 
+    // Enrich cart items with canonical names & prices from Firestore menu
+    // This prevents "Unknown Item" errors in scanning/KDS downstream
+    const menuItems = await getMenuPrices(db);
+    const enrichedCart = cart.map((item: any) => {
+      const menuEntry = menuItems.get(String(item.id));
+      return {
+        id: item.id,
+        name: menuEntry?.name || item.name || 'Unknown Item',
+        price: menuEntry?.price ?? item.price ?? 0,
+        qty: item.qty || item.quantity || 1,
+      };
+    });
+
     const newOrder = {
       id: orderId,
       orderNumber: result.orderNumber,
       userId: auth.uid,
       userRollNo: result.studentData!.regNo,
-      items: cart,
+      items: enrichedCart,
       totalPrice,
       slotName,
       payment_mode: paymentMode,
@@ -396,11 +328,11 @@ export const securePlaceUpiOrder = https.onCall(async (request: https.CallableRe
     const menuPrices = await getMenuPrices(db);
     let serverTotalPrice = 0;
     for (const item of cart) {
-      const canonicalPrice = menuPrices.get(String(item.id));
-      if (canonicalPrice === undefined) {
+      const menuEntry = menuPrices.get(String(item.id));
+      if (menuEntry === undefined) {
         throw new https.HttpsError('invalid-argument', `Unknown menu item: ${item.name}`);
       }
-      serverTotalPrice += canonicalPrice * item.qty;
+      serverTotalPrice += menuEntry.price * item.qty;
     }
 
     // Reject if client price differs by more than ₹1 (spoofing guard)
@@ -477,6 +409,18 @@ export const securePlaceUpiOrder = https.onCall(async (request: https.CallableRe
     });
 
     // 6. Create order in RTDB via Admin SDK (bypasses client write rules)
+    // Enrich cart items with canonical names & prices to prevent "Unknown Item" in scanning/KDS
+    const menuItems = await getMenuPrices(db);
+    const enrichedCart = cart.map((item: any) => {
+      const menuEntry = menuItems.get(String(item.id));
+      return {
+        id: item.id,
+        name: menuEntry?.name || item.name || 'Unknown Item',
+        price: menuEntry?.price ?? item.price ?? 0,
+        qty: item.qty || item.quantity || 1,
+      };
+    });
+
     const orderId = generateSecureOrderId();
     const now = Date.now();
     const newOrder = {
@@ -485,7 +429,7 @@ export const securePlaceUpiOrder = https.onCall(async (request: https.CallableRe
       userId: auth.uid,
       userRollNo: rollNo,
       userType: userType === 'external' ? 'guest' : 'student',
-      items: cart,
+      items: enrichedCart,
       totalPrice: serverTotalPrice,
       slotName,
       payment_mode: 'upi',

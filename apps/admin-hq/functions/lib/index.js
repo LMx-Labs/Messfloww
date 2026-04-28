@@ -58,13 +58,17 @@ async function getMenuPrices(db) {
         return cachedMenu;
     const snap = await db.collection('menu').get();
     const priceMap = new Map();
+    // Each document in the 'menu' collection IS one menu item (not a nested array)
     snap.docs.forEach(d => {
-        const items = d.data().items || [];
-        items.forEach((item) => priceMap.set(String(item.id), Number(item.price || 0)));
+        const data = d.data();
+        const id = data.id !== undefined ? String(data.id) : d.id;
+        const price = Number(data.price || 0);
+        const name = String(data.name || 'Unknown Item');
+        priceMap.set(id, { price, name });
     });
     cachedMenu = priceMap;
     menuCacheExpiry = Date.now() + 5 * 60 * 1000; // 5-minute TTL
-    return cachedMenu;
+    return priceMap;
 }
 /** Generate a cryptographically secure, non-guessable order ID */
 function generateSecureOrderId() {
@@ -74,92 +78,7 @@ function generateSecureOrderId() {
  * Hourly Cron Job: Processes active report subscriptions and emails them.
  * Efficiency constraints: Limit queries, optimize sends.
  */
-/*
-export const processSubscriptions = functions.pubsub.schedule('every 1 hours').onRun(async (context: any) => {
-  const db = admin.firestore();
-  
-  // Current hour string matching the format stored in DB: "22:00"
-  // Since server might be UTC, we should either run it in a specific timezone or
-  // allow the user to define timezone in frontend. For simplicity, we assume UTC matching string.
-  // We'll pad hour: "09:00"
-  const now = new Date();
-  const currentHourString = `${now.getHours().toString().padStart(2, '0')}:00`;
-
-  functions.logger.info(`Running subscription processor at ${currentHourString} (UTC)`);
-
-  try {
-    // 1. Fetch only ACTIVE subscriptions that are due to be sent AT THIS HOUR
-    // This dramatically reduces our read costs.
-    const subsRef = db.collection('report_subscriptions');
-    const q = subsRef
-      .where('enabled', '==', true)
-      // .where('sendTime', '==', currentHourString); // Optional: filter by time inside the query if indexed, or in memory
-      
-    const snapshot = await q.get();
-    
-    if (snapshot.empty) {
-      functions.logger.info("No active subscriptions found for this hour.");
-      return null;
-    }
-
-    // 2. Fetch Aggregated Data ONCE (Singleton pattern)
-    // instead of fetching per subscription to save read operations
-    const revenueSummary = await getDailyRevenueSummary();
-    const lowStockAlerts = await getLowStockAlerts();
-
-    // 3. Process each subscription
-    const emailPromises: Promise<any>[] = [];
-
-    snapshot.forEach(docSnap => {
-      const sub = docSnap.data();
-      
-      // In-memory filter for time and frequency to avoid complex composite indexes
-      if (sub.sendTime !== currentHourString) return;
-      
-      // Check frequency (simplified: daily sends every day)
-      if (sub.frequency !== 'daily') {
-         // Logic for weekly/monthly checks would go here based on now.getDay() etc.
-         // functions.logger.info(`Skipping non-daily sub ${docSnap.id}`);
-         // return;
-      }
-
-      // Generate Email HTML
-      const htmlBody = generateReportEmailHTML(
-        "Subscriber", // Ideally, link userId to a users collection to fetch real name
-        revenueSummary,
-        lowStockAlerts
-      );
-
-      // We define mail options
-      const mailOptions = {
-        from: `"MessFlow Analytics" <${SENDER_EMAIL}>`,
-        to: sub.recipients.join(','),
-        subject: `Your MessFlow Daily Report - ${now.toISOString().split('T')[0]}`,
-        html: htmlBody,
-      };
-
-      // Push to promises array for parallel sending
-      emailPromises.push(transporter.sendMail(mailOptions).then(() => {
-        // Update lastSent timestamp
-        return docSnap.ref.update({
-          lastSent: now.toISOString(),
-          updatedAt: now.toISOString()
-        });
-      }));
-    });
-
-    // 4. Await all emails and return
-    await Promise.all(emailPromises);
-    functions.logger.info(`Successfully processed ${emailPromises.length} report subscriptions.`);
-    
-    return null;
-
-  } catch (error) {
-    functions.logger.error("Error processing subscriptions:", error);
-    return null;
-  }
-});
-*/
+// processSubscriptions: removed — email reporting feature not active.
 /**
  * securePlaceOrder: The "Aspirin Logic" Checkout Flow
  * 1. Checks if Admin is Online.
@@ -201,8 +120,8 @@ exports.securePlaceOrder = https.onCall(async (request) => {
                 throw new https.HttpsError('not-found', 'User profile not found.');
             }
             const rollNo = (_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.rollNo;
-            if (!rollNo || rollNo === 'UNREGISTERED') {
-                throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order.');
+            if (!rollNo || rollNo === 'UNREGISTERED' || rollNo === 'EXTERNAL') {
+                throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order with credits.');
             }
             const studentRef = db.collection('students').doc(rollNo);
             const studentSnap = await transaction.get(studentRef);
@@ -321,12 +240,25 @@ exports.securePlaceOrder = https.onCall(async (request) => {
         const formatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
         // Keep it generic or use JS formatting
         const estimatedServingWindow = `${formatter.format(startTimeDate)} - ${formatter.format(endTimeDate)}`;
+        // Enrich cart items with canonical names & prices from Firestore menu
+        // This prevents "Unknown Item" errors in scanning/KDS downstream
+        const menuItems = await getMenuPrices(db);
+        const enrichedCart = cart.map((item) => {
+            var _a, _b;
+            const menuEntry = menuItems.get(String(item.id));
+            return {
+                id: item.id,
+                name: (menuEntry === null || menuEntry === void 0 ? void 0 : menuEntry.name) || item.name || 'Unknown Item',
+                price: (_b = (_a = menuEntry === null || menuEntry === void 0 ? void 0 : menuEntry.price) !== null && _a !== void 0 ? _a : item.price) !== null && _b !== void 0 ? _b : 0,
+                qty: item.qty || item.quantity || 1,
+            };
+        });
         const newOrder = {
             id: orderId,
             orderNumber: result.orderNumber,
             userId: auth.uid,
             userRollNo: result.studentData.regNo,
-            items: cart,
+            items: enrichedCart,
             totalPrice,
             slotName,
             payment_mode: paymentMode,
@@ -374,7 +306,7 @@ exports.securePlaceOrder = https.onCall(async (request) => {
 // securePlaceUpiOrder — Server-side UPI order with price validation
 // ─────────────────────────────────────────────────────────────────────────────
 exports.securePlaceUpiOrder = https.onCall(async (request) => {
-    var _a, _b;
+    var _a;
     const { data, auth } = request;
     if (!(auth === null || auth === void 0 ? void 0 : auth.uid)) {
         throw new https.HttpsError('unauthenticated', 'You must be logged in to place an order.');
@@ -395,11 +327,11 @@ exports.securePlaceUpiOrder = https.onCall(async (request) => {
         const menuPrices = await getMenuPrices(db);
         let serverTotalPrice = 0;
         for (const item of cart) {
-            const canonicalPrice = menuPrices.get(String(item.id));
-            if (canonicalPrice === undefined) {
+            const menuEntry = menuPrices.get(String(item.id));
+            if (menuEntry === undefined) {
                 throw new https.HttpsError('invalid-argument', `Unknown menu item: ${item.name}`);
             }
-            serverTotalPrice += canonicalPrice * item.qty;
+            serverTotalPrice += menuEntry.price * item.qty;
         }
         // Reject if client price differs by more than ₹1 (spoofing guard)
         if (Math.abs(clientTotalPrice - serverTotalPrice) > 1) {
@@ -408,19 +340,30 @@ exports.securePlaceUpiOrder = https.onCall(async (request) => {
             });
             throw new https.HttpsError('invalid-argument', `Price mismatch: expected ₹${serverTotalPrice}, received ₹${clientTotalPrice}.`);
         }
-        // 3. Verify student exists and is active
+        // 3. Verify user type and status
         const userSnap = await db.collection('users').doc(auth.uid).get();
         if (!userSnap.exists)
             throw new https.HttpsError('not-found', 'User profile not found.');
-        const rollNo = (_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.rollNo;
-        if (!rollNo || rollNo === 'UNREGISTERED') {
-            throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order.');
+        const userData = userSnap.data();
+        const userType = userData === null || userData === void 0 ? void 0 : userData.userType;
+        let rollNo = (userData === null || userData === void 0 ? void 0 : userData.rollNo) || 'EXTERNAL';
+        if (userType === 'internal') {
+            if (!rollNo || rollNo === 'EXTERNAL' || rollNo === 'UNREGISTERED') {
+                throw new https.HttpsError('failed-precondition', 'Internal user missing roll number.');
+            }
+            const studentSnap = await db.collection('students').doc(rollNo).get();
+            if (!studentSnap.exists)
+                throw new https.HttpsError('not-found', 'Student record not found.');
+            if (((_a = studentSnap.data()) === null || _a === void 0 ? void 0 : _a.status) === 'disabled') {
+                throw new https.HttpsError('permission-denied', 'Account has been disabled.');
+            }
         }
-        const studentSnap = await db.collection('students').doc(rollNo).get();
-        if (!studentSnap.exists)
-            throw new https.HttpsError('not-found', 'Student record not found.');
-        if (((_b = studentSnap.data()) === null || _b === void 0 ? void 0 : _b.status) === 'disabled') {
-            throw new https.HttpsError('permission-denied', 'Account has been disabled.');
+        else {
+            // For external/guest users
+            if ((userData === null || userData === void 0 ? void 0 : userData.status) === 'disabled') {
+                throw new https.HttpsError('permission-denied', 'Guest account has been disabled.');
+            }
+            rollNo = 'EXTERNAL';
         }
         // 4. Atomically decrement RTDB stock (same pattern as securePlaceOrder)
         const stockReverts = [];
@@ -468,6 +411,18 @@ exports.securePlaceUpiOrder = https.onCall(async (request) => {
             }
         });
         // 6. Create order in RTDB via Admin SDK (bypasses client write rules)
+        // Enrich cart items with canonical names & prices to prevent "Unknown Item" in scanning/KDS
+        const menuItems = await getMenuPrices(db);
+        const enrichedCart = cart.map((item) => {
+            var _a, _b;
+            const menuEntry = menuItems.get(String(item.id));
+            return {
+                id: item.id,
+                name: (menuEntry === null || menuEntry === void 0 ? void 0 : menuEntry.name) || item.name || 'Unknown Item',
+                price: (_b = (_a = menuEntry === null || menuEntry === void 0 ? void 0 : menuEntry.price) !== null && _a !== void 0 ? _a : item.price) !== null && _b !== void 0 ? _b : 0,
+                qty: item.qty || item.quantity || 1,
+            };
+        });
         const orderId = generateSecureOrderId();
         const now = Date.now();
         const newOrder = {
@@ -475,7 +430,8 @@ exports.securePlaceUpiOrder = https.onCall(async (request) => {
             orderNumber,
             userId: auth.uid,
             userRollNo: rollNo,
-            items: cart,
+            userType: userType === 'external' ? 'guest' : 'student',
+            items: enrichedCart,
             totalPrice: serverTotalPrice,
             slotName,
             payment_mode: 'upi',

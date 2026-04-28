@@ -37,12 +37,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const statusListenerRef = useRef<(() => void) | null>(null);
   const sessionListenerRef = useRef<(() => void) | null>(null);
 
-  // Cold Start
+  // Cold Start: Restore cached profile for offline display only.
+  // userType is NOT set from cache — it must be confirmed by the Firestore lookup on each session.
   useEffect(() => {
     offlineStorage.getProfile().then((cached) => {
       if (cached) {
         setUserProfile(cached as UserProfile);
-        setUserType((cached.userType as UserType) || 'loading');
+        // Note: we intentionally do NOT set userType here.
+        // The network lookup in onAuthStateChanged is the single source of truth for userType.
       }
     }).catch(console.error);
   }, []);
@@ -194,13 +196,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             startStatusWatcher(regNo);
             
-            // Show welcome back only if this is a fresh login, wait, 
-            // since onAuthStateChanged runs on every load, this will toast on every page refresh!
-            // Let's avoid that or rely on standard UI. The request just says "fires once on session start". 
-            // But we can just omit the toast or check if it was just logged in. I will omit the toast to prevent refresh spam.
-            // Wait, the plan said: `internal: toast.success("Welcome back, {name}!") — fires once on session start`
-            // But onAuthStateChanged fires on refresh. I'll omit to avoid spam.
-
             setLoading(false);
             return;
           }

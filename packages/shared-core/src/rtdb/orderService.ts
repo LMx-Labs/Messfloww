@@ -2,6 +2,7 @@ import { ref, onValue, set, update, remove, get, runTransaction, query as rtdbQu
 import { doc, setDoc } from "firebase/firestore";
 import { rtdb, db, app } from "../firebaseConfig";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { stockService } from "./stockService";
 import type { OrderItem, MealSlot } from "../types";
 
 export const orderService = {
@@ -10,9 +11,7 @@ export const orderService = {
    * subscribeActiveOrders: Real-time listener for the active order stream.
    * ARCHITECTURAL NOTE: 
    * 1. RTDB single-child filtering is limited; we fetch the full list and sort client-side.
-   * 2. LocalStorage caching ("offline_orders_cache") has been removed to prevent browser bloat 
-   *    and ensure financial integrity by forcing network verification for scans.
-   * 3. Recommended future path: Mirror active_orders to Firestore for better query/indexing.
+   * 2. Recommended future path: Mirror active_orders to Firestore for better query/indexing.
    */
   subscribeActiveOrders(callback: (orders: any[]) => void) {
     const activeOrdersRef = ref(rtdb, "active_orders");
@@ -27,8 +26,6 @@ export const orderService = {
         const timeB = new Date(b.createdAt).getTime();
         return timeB - timeA;
       });
-      
-      // Note: localStorage caching removed to prevent bloat. reliance on real-time RTDB only.
       
       callback(orders);
     });
@@ -67,44 +64,6 @@ export const orderService = {
     return orderData.id;
   },
 
-  async confirmUpiPayment(orderId: string): Promise<void> {
-    const orderRef = ref(rtdb, `active_orders/${orderId}`);
-    await runTransaction(orderRef, (data) => {
-      if (!data) return data;
-      if (data.paymentStatus === 'PENDING') {
-        data.paymentStatus = 'PAID';
-        data.paidAt = new Date().toISOString();
-        return data;
-      }
-      return; // abort if not pending
-    });
-  },
-
-  async atomicCollectOrder(orderId: string) {
-    const orderRef = ref(rtdb, `active_orders/${orderId}`);
-    const result = await runTransaction(orderRef, (orderData) => {
-      if (orderData === null) return orderData;
-      
-      if (orderData.status === 'ordered' || orderData.status === 'pending' || orderData.status === 'preparing') {
-        if (!orderData.qrUsed) {
-          orderData.qrUsed = true;
-          orderData.paymentStatus = 'REDEEMED';
-          orderData.status = 'processing'; // Moved to processing first for KOT generation
-          orderData.updatedAt = new Date().toISOString();
-          orderData.scannedAt = new Date().toISOString();
-          return orderData;
-        }
-      }
-      return; // abort
-    });
-
-    if (result.committed && result.snapshot.val()) {
-      return result.snapshot.val();
-    } else {
-      throw new Error("Order already scanned, cancelled, or not pending.");
-    }
-  },
-
   async markOrderReady(orderId: string) {
     const orderRef = ref(rtdb, `active_orders/${orderId}`);
     await update(orderRef, { status: 'ready', updatedAt: new Date().toISOString() });
@@ -130,6 +89,47 @@ export const orderService = {
 
   async removeActiveOrder(orderId: string) {
     const orderRef = ref(rtdb, `active_orders/${orderId}`);
+    await remove(orderRef);
+  },
+
+  /**
+   * cancelPendingOrder — Gatekeeper rejection: "Admin clicked No, student hasn't paid."
+   * 1. Fetch the order and verify it is still PENDING.
+   * 2. Atomically revert stock for each item (incrementStock).
+   * 3. Archive to Firestore historical_orders with status=cancelled.
+   * 4. Remove from RTDB active_orders.
+   */
+  async cancelPendingOrder(orderId: string): Promise<void> {
+    const orderRef = ref(rtdb, `active_orders/${orderId}`);
+    const snap = await get(orderRef);
+    if (!snap.exists()) {
+      throw new Error('Order not found.');
+    }
+    const orderData = { id: orderId, ...snap.val() };
+
+    if (orderData.paymentStatus !== 'PENDING') {
+      throw new Error('Order is not PENDING and cannot be cancelled this way.');
+    }
+
+    // Atomically revert stock for all items
+    await Promise.all(
+      (orderData.items || []).map((item: any) =>
+        stockService.incrementStock(Number(item.id), Number(item.qty || 1))
+      )
+    );
+
+    // Archive to Firestore
+    const now = new Date().toISOString();
+    await setDoc(doc(db, 'historical_orders', orderId), {
+      ...orderData,
+      status: 'cancelled',
+      paymentStatus: 'CANCELLED',
+      cancelReason: 'rejected_by_admin',
+      cancelledAt: now,
+      archivedAt: now,
+    });
+
+    // Remove from active RTDB
     await remove(orderRef);
   },
 

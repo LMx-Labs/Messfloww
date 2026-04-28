@@ -11,6 +11,7 @@ import { tryConsume, ORDER_RATE, secondsUntilNextToken } from "../../shared/util
 import { ref, onValue } from "firebase/database";
 import { rtdb } from "@messflow/shared-core";
 import { offlineStorage } from "../../shared/lib/offline/storage";
+import { menuService } from "../ordering/menuService";
 
 export function CartScreen() {
   const navigate = useNavigate();
@@ -22,6 +23,8 @@ export function CartScreen() {
   const [cart, setCart] = useState(initialCart);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAdminOnline, setIsAdminOnline] = useState(true);
+  // Live menu IDs for cart pre-check — null means not yet loaded
+  const [liveMenuIds, setLiveMenuIds] = useState<Set<number> | null>(null);
 
   type PaymentMethod = 'credits' | 'upi';
   const isEnrolled = userProfile?.isEnrolled ?? false;
@@ -39,6 +42,30 @@ export function CartScreen() {
       setIsAdminOnline(snap.val() !== false);
     });
     return () => unsubscribe();
+  }, []);
+
+  // Cart Pre-Check: Subscribe to live menu and strip any stale items whose ID
+  // no longer exists in Firestore. Prevents "Unknown Item" errors at checkout.
+  useEffect(() => {
+    const unsub = menuService.subscribeToMenu((menu) => {
+      const allIds = new Set<number>();
+      Object.values(menu).forEach((items) => {
+        items.forEach((item: any) => allIds.add(Number(item.id)));
+      });
+      setLiveMenuIds(allIds);
+
+      setCart((prev: any[]) => {
+        const valid = prev.filter((item: any) => allIds.has(Number(item.id)));
+        if (valid.length < prev.length) {
+          const removedCount = prev.length - valid.length;
+          toast.warning(
+            `${removedCount} item${removedCount > 1 ? 's' : ''} removed — no longer on the menu. Please re-select.`
+          );
+        }
+        return valid;
+      });
+    });
+    return unsub;
   }, []);
 
   useEffect(() => {

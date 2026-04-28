@@ -7,7 +7,7 @@ import {
   menuService, 
   kotQueueService, 
   orderService, 
-  printReceipt, 
+  printReceiptSilent, 
   mapOrderToBill, 
   mapOrderToKOTs,
   TimeSlot,
@@ -116,7 +116,7 @@ export function ManualOrderModal({ isOpen, onClose }: ManualOrderModalProps) {
       setTimeout(() => {
         const bill = mapOrderToBill(newOrder);
         const kots = mapOrderToKOTs(newOrder, menuItems);
-        printReceipt([bill, ...kots], null); // Default settings
+        printReceiptSilent([bill, ...kots], null); // Default settings
       }, 500);
 
       toast.success("Order Placed & Printing");

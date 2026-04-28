@@ -6,7 +6,7 @@ import {
   menuService, 
   timeSlotService, 
   fetchSettings, 
-  printReceipt, 
+  printReceiptSilent, 
   mapOrderToBill,
   mapOrderToKOTs,
   kotQueueService,
@@ -168,7 +168,7 @@ export function ShopOrderPage() {
 
       const bill = mapOrderToBill(newOrder as any);
       const kots = mapOrderToKOTs(newOrder as any, allMenuItems);
-      printReceipt([bill, ...kots], settings);
+      printReceiptSilent([bill, ...kots], settings);
       
       setCart([]);
       setPaymentMode("upi");

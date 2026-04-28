@@ -6,6 +6,10 @@ export function useOfflineQueue<T>(queueKey: string, syncFunction: (item: T) => 
   const [queue, setQueue] = useState<T[]>([]);
 
   useEffect(() => {
+    // One-time cleanup: purge the legacy 'offline_orders_cache' key that was used
+    // in older builds. It has been superseded by the Cloud Function order flow.
+    localStorage.removeItem('offline_orders_cache');
+
     const savedQueue = JSON.parse(localStorage.getItem(queueKey) || '[]');
     setQueue(savedQueue);
 

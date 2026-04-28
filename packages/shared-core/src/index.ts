@@ -15,7 +15,6 @@ export { processTransaction } from "./transactions/processTransaction";
 export { timeSlotService } from "./services/timeSlotService";
 export { menuService } from "./services/menuService";
 export * from "./services/settingsService";
-// Explicit exports from studentService to avoid name clash with settingsService (fetchActionPassword)
 export {
   syncAllStudents,
   fetchAllStudents,

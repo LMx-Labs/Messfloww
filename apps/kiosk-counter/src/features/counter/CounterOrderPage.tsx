@@ -8,7 +8,7 @@ import {
   fetchSettings, 
   getStudentByRegNo, 
   deductStudentBalance,
-  printReceipt, 
+  printReceiptSilent, 
   mapOrderToBill,
   mapOrderToKOTs,
   kotQueueService,
@@ -198,7 +198,7 @@ export function CounterOrderPage() {
       const studentForReceipt = { ...student, balance: newBalance };
       const bill = mapOrderToBill(newOrder as any, studentForReceipt);
       const kots = mapOrderToKOTs(newOrder as any, allMenuItems);
-      printReceipt([bill, ...kots], settings);
+      printReceiptSilent([bill, ...kots], settings);
       
       setStudent({ ...student, balance: newBalance, credits: newBalance });
       toast.success(`Order placed! ₹${total} deducted from ${student.name}'s wallet.`);
