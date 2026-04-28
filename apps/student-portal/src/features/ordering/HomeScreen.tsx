@@ -27,7 +27,6 @@ export function HomeScreen() {
   const [activeSlot, setActiveSlot] = useState<MealSlot | null>(null);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showRegBanner, setShowRegBanner] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Load cart from offline storage on mount
@@ -222,27 +221,6 @@ export function HomeScreen() {
   return (
     <div className="min-h-screen bg-[#121212] pb-24">
       <OfflineIndicator />
-      {/* Registration Banner */}
-      {showRegBanner && userType === 'external' && (
-        <motion.div
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: "auto", opacity: 1 }}
-          className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-3 flex items-start gap-3 sticky top-0 z-20"
-        >
-          <Info className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-amber-500 text-[11px] font-bold leading-relaxed uppercase tracking-wider">
-              Guest Mode: You can browse and order via UPI. To use credits, ask the mess admin to register your email.
-            </p>
-          </div>
-          <button 
-            onClick={() => setShowRegBanner(false)} 
-            className="text-amber-500/50 hover:text-amber-500 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </motion.div>
-      )}
 
       {/* Account Disabled Banner */}
       {userProfile && userProfile.status === 'disabled' && (
