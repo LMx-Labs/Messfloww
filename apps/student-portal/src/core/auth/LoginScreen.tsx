@@ -18,7 +18,6 @@ export function LoginScreen() {
     setLoading(true);
     try {
       await signInWithPopup(auth, googleProvider);
-      toast.success("Login successful!");
       navigate(from, { replace: true });
     } catch (error: any) {
       console.error("Login Error:", error);

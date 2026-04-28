@@ -14,7 +14,7 @@ import { toast } from "sonner";
 
 export function ProfileScreen() {
   const navigate = useNavigate();
-  const { userProfile, user, logout } = useAuth();
+  const { userProfile, user, logout, userType } = useAuth();
   const { isInstallable, promptInstall } = useInstallPrompt();
   
   const [recentOrders, setRecentOrders] = useState<OrderDoc[]>([]);
@@ -68,22 +68,22 @@ export function ProfileScreen() {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-white text-xl font-bold">{userProfile?.name || "Student"}</h2>
-                {userProfile?.isRegistered && (
+                {userType === 'internal' && (
                   <ShieldCheck className="w-4 h-4 text-[#10B981]" />
                 )}
               </div>
               <p className="text-gray-400 text-sm">{userProfile?.email || ""}</p>
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded uppercase tracking-wider font-medium border border-white/5">
-                  Roll: {userProfile?.isRegistered ? userProfile.rollNo : "NOT LINKED"}
+                  Roll: {userType === 'internal' ? userProfile?.rollNo : "NOT LINKED"}
                 </span>
-                {userProfile?.isRegistered ? (
+                {userType === 'internal' ? (
                   <span className="text-[9px] bg-[#10B981]/10 text-[#10B981] px-2 py-0.5 rounded font-black tracking-widest border border-[#10B981]/20 uppercase">
                     Registered
                   </span>
                 ) : (
                   <span className="text-[9px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded font-black tracking-widest border border-amber-500/20 uppercase">
-                    Unregistered
+                    Guest Mode
                   </span>
                 )}
               </div>
@@ -138,9 +138,9 @@ export function ProfileScreen() {
               <EmptyState
                 icon={PackageOpen}
                 title="No Orders Yet"
-                description={userProfile?.isRegistered 
+                description={userType === 'internal' 
                   ? "Your delicious meals will appear here once you place your first order!"
-                  : "Register as a student to start ordering delicious meals."}
+                  : "Welcome Guest! Your UPI orders will appear here once placed."}
               />
             ) : (
               recentOrders.map((order, idx) => (

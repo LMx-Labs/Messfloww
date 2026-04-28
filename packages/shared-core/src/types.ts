@@ -19,12 +19,11 @@ export interface UserProfile {
   rollNo: string;
   walletBalance: number;
   createdAt: string;
-  isRegistered: boolean;
+  userType?: "internal" | "external";
   isEnrolled?: boolean;
   status: "active" | "disabled" | "pending";
   photoURL?: string;
   activeSessionId?: string;
-  isExternal?: boolean;
 }
 
 // ── Payment ──

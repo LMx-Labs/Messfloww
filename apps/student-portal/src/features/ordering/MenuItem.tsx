@@ -14,12 +14,11 @@ interface MenuItemProps {
   };
   onAdd: (item: { id: number; name: string; price: number }) => void;
   isRestricted?: boolean;
-  isUnregistered?: boolean;
 }
 
-export function MenuItem({ item, onAdd, isRestricted, isUnregistered }: MenuItemProps) {
+export function MenuItem({ item, onAdd, isRestricted }: MenuItemProps) {
   const isUnavailable = !item.available || item.stock === "out";
-  const finalDisabled = isUnavailable || isRestricted || isUnregistered;
+  const finalDisabled = isUnavailable || isRestricted;
 
   return (
     <motion.div
@@ -32,8 +31,6 @@ export function MenuItem({ item, onAdd, isRestricted, isUnregistered }: MenuItem
           ? "border-white/5 opacity-50"
           : isRestricted
           ? "border-red-500/20 opacity-75 bg-red-900/5"
-          : isUnregistered
-          ? "border-white/10 opacity-75 grayscale-[0.5]"
           : "border-white/10 hover:border-[#FFD54F]/30 hover:shadow-lg hover:shadow-[#FFD54F]/10"
       }`}
     >
@@ -61,12 +58,6 @@ export function MenuItem({ item, onAdd, isRestricted, isUnregistered }: MenuItem
               <span className="text-red-500/70 text-[10px] uppercase font-bold flex items-center gap-1 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20">
                 <Info className="w-3 h-3" />
                 Account Restricted
-              </span>
-            )}
-            {isUnregistered && !isUnavailable && !isRestricted && (
-              <span className="text-amber-500/70 text-[10px] uppercase font-bold flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                <Info className="w-3 h-3" />
-                Reg Needed
               </span>
             )}
           </div>

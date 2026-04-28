@@ -178,8 +178,8 @@ export const securePlaceOrder = https.onCall(async (request: https.CallableReque
       }
       
       const rollNo = userSnap.data()?.rollNo;
-      if (!rollNo || rollNo === 'UNREGISTERED') {
-        throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order.');
+      if (!rollNo || rollNo === 'UNREGISTERED' || rollNo === 'EXTERNAL') {
+        throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order with credits.');
       }
 
       const studentRef = db.collection('students').doc(rollNo);
@@ -412,17 +412,28 @@ export const securePlaceUpiOrder = https.onCall(async (request: https.CallableRe
         `Price mismatch: expected ₹${serverTotalPrice}, received ₹${clientTotalPrice}.`);
     }
 
-    // 3. Verify student exists and is active
+    // 3. Verify user type and status
     const userSnap = await db.collection('users').doc(auth.uid).get();
     if (!userSnap.exists) throw new https.HttpsError('not-found', 'User profile not found.');
-    const rollNo = userSnap.data()?.rollNo;
-    if (!rollNo || rollNo === 'UNREGISTERED') {
-      throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order.');
-    }
-    const studentSnap = await db.collection('students').doc(rollNo).get();
-    if (!studentSnap.exists) throw new https.HttpsError('not-found', 'Student record not found.');
-    if (studentSnap.data()?.status === 'disabled') {
-      throw new https.HttpsError('permission-denied', 'Account has been disabled.');
+    const userData = userSnap.data();
+    const userType = userData?.userType;
+    let rollNo = userData?.rollNo || 'EXTERNAL';
+
+    if (userType === 'internal') {
+      if (!rollNo || rollNo === 'EXTERNAL' || rollNo === 'UNREGISTERED') {
+         throw new https.HttpsError('failed-precondition', 'Internal user missing roll number.');
+      }
+      const studentSnap = await db.collection('students').doc(rollNo).get();
+      if (!studentSnap.exists) throw new https.HttpsError('not-found', 'Student record not found.');
+      if (studentSnap.data()?.status === 'disabled') {
+        throw new https.HttpsError('permission-denied', 'Account has been disabled.');
+      }
+    } else {
+      // For external/guest users
+      if (userData?.status === 'disabled') {
+         throw new https.HttpsError('permission-denied', 'Guest account has been disabled.');
+      }
+      rollNo = 'EXTERNAL';
     }
 
     // 4. Atomically decrement RTDB stock (same pattern as securePlaceOrder)
@@ -473,6 +484,7 @@ export const securePlaceUpiOrder = https.onCall(async (request: https.CallableRe
       orderNumber,
       userId: auth.uid,
       userRollNo: rollNo,
+      userType: userType === 'external' ? 'guest' : 'student',
       items: cart,
       totalPrice: serverTotalPrice,
       slotName,

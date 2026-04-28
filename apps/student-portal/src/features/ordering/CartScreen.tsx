@@ -15,7 +15,7 @@ import { offlineStorage } from "../../shared/lib/offline/storage";
 export function CartScreen() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, userProfile, updateUserProfile } = useAuth();
+  const { user, userProfile, updateUserProfile, userType } = useAuth();
   
   const { cart: initialCart } = location.state || { cart: [] };
   
@@ -42,34 +42,35 @@ export function CartScreen() {
   }, []);
 
   useEffect(() => {
+    if (userType === 'external') {
+      setSelectedPayment('upi');
+      return;
+    }
     const totalPrice = cart.reduce((sum: number, item: any) => sum + item.price * item.qty, 0);
     const balanceAfterOrder = (userProfile?.walletBalance || 0) - totalPrice;
-    if (isEnrolled && balanceAfterOrder >= 0) {
+    if (userType === 'internal' && isEnrolled && balanceAfterOrder >= 0) {
       setSelectedPayment('credits');
     } else {
       setSelectedPayment('upi');
     }
-  }, [isEnrolled, cart, userProfile?.walletBalance]);
+  }, [userType, isEnrolled, cart, userProfile?.walletBalance]);
 
-  // Guard - Block unregistered or disabled users from seeing the cart content
-  if (userProfile && (!userProfile.isRegistered || userProfile.status === 'disabled')) {
-    const isDisabled = userProfile.status === 'disabled';
+  // Guard - Block disabled users from seeing the cart content
+  if (userProfile && userProfile.status === 'disabled') {
     return (
       <div className="min-h-screen bg-[#121212] flex flex-col items-center justify-center p-6 text-center">
         <motion.div
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
-          className={`w-20 h-20 ${isDisabled ? 'bg-red-500/10 border-red-500/20' : 'bg-amber-500/10 border-amber-500/20'} rounded-full flex items-center justify-center mb-6 border`}
+          className="w-20 h-20 bg-red-500/10 border-red-500/20 rounded-full flex items-center justify-center mb-6 border"
         >
-          {isDisabled ? <ShieldAlert className="w-10 h-10 text-red-500" /> : <ShieldAlert className="w-10 h-10 text-amber-500" />}
+          <ShieldAlert className="w-10 h-10 text-red-500" />
         </motion.div>
         <h2 className="text-white text-2xl font-bold mb-3 uppercase tracking-tight">
-          {isDisabled ? "Account Access Restricted" : "Registration Required"}
+          Account Access Restricted
         </h2>
         <p className="text-gray-400 max-w-xs mb-8 leading-relaxed text-sm">
-          {isDisabled 
-            ? "Your account has been restricted by management. You cannot view your cart or place orders at this time." 
-            : "You're currently using an unregistered account. Only registered students can place orders with their pre-assigned credits."}
+          Your account has been restricted by management. You cannot view your cart or place orders at this time.
         </p>
         <div className="space-y-4 w-full max-w-[200px]">
           <motion.button
@@ -79,8 +80,8 @@ export function CartScreen() {
           >
             Back to Menu
           </motion.button>
-          <p className={`${isDisabled ? 'text-red-500/50' : 'text-[#FFD54F]/50'} text-[10px] uppercase font-bold tracking-widest`}>
-            {isDisabled ? 'Contact Admin for Support' : 'Contact Admin to Register'}
+          <p className="text-red-500/50 text-[10px] uppercase font-bold tracking-widest">
+            Contact Admin for Support
           </p>
         </div>
       </div>
@@ -115,8 +116,8 @@ export function CartScreen() {
       return;
     }
 
-    if (!userProfile.isRegistered || userProfile.status === 'disabled') {
-      toast.error(userProfile.status === 'disabled' ? "Account restricted. Cannot place order." : "Only registered students can place orders.");
+    if (userProfile.status === 'disabled') {
+      toast.error("Account restricted. Cannot place order.");
       return;
     }
 
@@ -191,7 +192,8 @@ export function CartScreen() {
           userProfile.rollNo,
           cart,
           totalPrice,
-          currentSlot
+          currentSlot,
+          userType === 'external' ? 'guest' : 'student'
         );
         
         toast.success("UPI Order placed! Awaiting payment confirmation.");
@@ -226,6 +228,16 @@ export function CartScreen() {
           <h1 className="text-white text-2xl">Your Cart</h1>
         </div>
       </div>
+
+      {/* Guest Banner */}
+      {userType === 'external' && (
+        <div className="mx-4 mt-4 bg-[#FFD54F]/10 border border-[#FFD54F]/20 rounded-xl p-3 flex items-start gap-2">
+          <ShieldAlert className="w-5 h-5 text-[#FFD54F] shrink-0 mt-0.5" />
+          <p className="text-[#FFD54F]/80 text-xs leading-relaxed">
+            Guest Checkout Mode. Credit payments are disabled for guests. Please pay via UPI.
+          </p>
+        </div>
+      )}
 
       {/* Cart Items */}
       <div className="p-4 space-y-3 pb-48">
@@ -295,7 +307,7 @@ export function CartScreen() {
       {cart.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#1A1A1A] to-[#1A1A1A]/95 backdrop-blur-lg border-t border-white/10 p-4 space-y-4">
           {/* Wallet Preview */}
-          {isEnrolled && (
+          {userType === 'internal' && isEnrolled && (
             <div className="bg-[#1E2A38] rounded-xl p-4 border border-white/10 space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-400">Total Price</span>
@@ -327,7 +339,7 @@ export function CartScreen() {
           <div className="space-y-2 mb-4">
             <p className="text-xs font-bold text-muted-foreground uppercase text-gray-400">Payment Mode</p>
             <div className="grid grid-cols-2 gap-2">
-              {isEnrolled && (
+              {userType === 'internal' && isEnrolled && (
                 <button 
                   onClick={() => balanceAfterOrder >= 0 && setSelectedPayment("credits")} 
                   disabled={balanceAfterOrder < 0}
@@ -337,7 +349,7 @@ export function CartScreen() {
               )}
               <button 
                 onClick={() => setSelectedPayment("upi")} 
-                className={`py-3 px-3 ${!isEnrolled ? 'col-span-2' : ''} rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all border-2 ${selectedPayment === "upi" ? "bg-[#FFD54F]/20 border-[#FFD54F] text-[#FFD54F]" : "bg-[#1E2A38] border-transparent text-gray-400 opacity-80"}`}>
+                className={`py-3 px-3 ${userType === 'external' || !isEnrolled ? 'col-span-2' : ''} rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all border-2 ${selectedPayment === "upi" ? "bg-[#FFD54F]/20 border-[#FFD54F] text-[#FFD54F]" : "bg-[#1E2A38] border-transparent text-gray-400 opacity-80"}`}>
                 <QrCode className="w-5 h-5" /> Pay via UPI
               </button>
             </div>

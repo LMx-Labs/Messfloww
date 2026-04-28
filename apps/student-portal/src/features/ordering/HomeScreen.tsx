@@ -17,7 +17,7 @@ import { offlineStorage } from "../../shared/lib/offline/storage";
 
 export function HomeScreen() {
   const navigate = useNavigate();
-  const { userProfile, user } = useAuth();
+  const { userProfile, user, userType } = useAuth();
   
   const [menuData, setMenuData] = useState<MenuData>({});
   const [selectedCategory, setSelectedCategory] = useState<string>("");
@@ -196,7 +196,7 @@ export function HomeScreen() {
   }, []);
 
   const addToCart = (item: { id: number; name: string; price: number }) => {
-    if (!userProfile?.isRegistered || userProfile?.status === 'disabled') return;
+    if (userProfile?.status === 'disabled') return;
 
     setCart((prev: any[]) => {
       const existing = prev.find((i: any) => i.id === item.id);
@@ -223,7 +223,7 @@ export function HomeScreen() {
     <div className="min-h-screen bg-[#121212] pb-24">
       <OfflineIndicator />
       {/* Registration Banner */}
-      {showRegBanner && userProfile && !userProfile.isRegistered && (
+      {showRegBanner && userType === 'external' && (
         <motion.div
           initial={{ height: 0, opacity: 0 }}
           animate={{ height: "auto", opacity: 1 }}
@@ -232,8 +232,7 @@ export function HomeScreen() {
           <Info className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="text-amber-500 text-[11px] font-bold leading-relaxed uppercase tracking-wider">
-              Unregistered Account: You need to be a registered student to place orders.
-              Contact the mess admin to link your email.
+              Guest Mode: You can browse and order via UPI. To use credits, ask the mess admin to register your email.
             </p>
           </div>
           <button 
@@ -399,7 +398,6 @@ export function HomeScreen() {
                           }} 
                           onAdd={addToCart} 
                           isRestricted={userProfile?.status === 'disabled'}
-                          isUnregistered={!userProfile?.isRegistered}
                         />
                       );
                     })}

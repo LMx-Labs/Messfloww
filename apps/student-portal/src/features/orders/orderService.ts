@@ -34,7 +34,8 @@ export const orderService = {
     _userRollNo: string,
     items: OrderItem[],
     totalPrice: number,
-    slotInfo: MealSlot
+    slotInfo: MealSlot,
+    _userType?: string
   ): Promise<{ id: string, orderNumber: number }> {
     const functions = getFunctions(db.app);
     const securePlaceUpiOrder = httpsCallable(functions, 'securePlaceUpiOrder');
