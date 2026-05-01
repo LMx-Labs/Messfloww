@@ -28,9 +28,9 @@ service cloud.firestore {
       );
     }
 
-    // Users — own document only
+    // Users — own document only, staff can update wallet balance
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isAuth() && (request.auth.uid == uid || isStaff());
     }
 
     // Students — read if authenticated, write via Staff/Admin
