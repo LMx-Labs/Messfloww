@@ -83,7 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: email,
       name: studentData.name || existing?.name || currentUser.displayName || "Unknown Student",
       rollNo: studentData.regNo || regNo,
-      walletBalance: studentData.balance !== undefined ? studentData.balance : (existing?.walletBalance || 0),
+      walletBalance: studentData.balance !== undefined ? studentData.balance : (studentData.credits !== undefined ? studentData.credits : (existing?.walletBalance || 0)),
       userType: "internal",
       status: studentData.status || "active",
       photoURL: currentUser.photoURL || existing?.photoURL,
@@ -115,7 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const updatedProfile: UserProfile = {
             ...prev,
             status: latestData.status || "active",
-            walletBalance: latestData.balance !== undefined ? latestData.balance : prev.walletBalance,
+            walletBalance: latestData.balance !== undefined ? latestData.balance : (latestData.credits !== undefined ? latestData.credits : prev.walletBalance),
             name: latestData.name || prev.name,
             activeSessionId: latestData.activeSessionId,
             isEnrolled: latestData.isNightMessEnrolled === true || ((latestData.balance > 0) && (latestData.status === "active"))

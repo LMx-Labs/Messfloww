@@ -105,11 +105,19 @@ export function StudentsPage() {
     resetActionRateLimit('students_action');
     const studentToEdit = studentsFromContext.find(s => s.id === pendingEditId);
     if (studentToEdit) {
-      await walletService.topUpWalletByRegNo(studentToEdit.regNo, parseInt(pendingEditBalance) || 0);
-      toast.success("Balance updated");
+      try {
+        await walletService.topUpWalletByRegNo(studentToEdit.regNo, parseInt(pendingEditBalance) || 0);
+        toast.success("Balance updated");
+        setShowEditPasswordModal(false);
+        setEditPassword("");
+      } catch (error) {
+        toast.error("Failed to update balance. Student document might be missing.");
+        console.error(error);
+      }
+    } else {
+      setShowEditPasswordModal(false);
+      setEditPassword("");
     }
-    setShowEditPasswordModal(false);
-    setEditPassword("");
   };
 
   const handleConfirmToggleStatus = async () => {

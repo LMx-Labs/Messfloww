@@ -1,4 +1,4 @@
-import { collection, query, where, getDocs, doc, updateDoc, writeBatch, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, query, where, getDoc, getDocs, doc, updateDoc, writeBatch, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "@messflow/shared-core";
 
 export const walletService = {
@@ -10,33 +10,32 @@ export const walletService = {
    * 4. Log the transaction.
    */
   async topUpWalletByRegNo(regNo: string, amount: number) {
-    const studentsRef = collection(db, "students");
-    const q = query(studentsRef, where("regNo", "==", regNo));
-    const querySnapshot = await getDocs(q);
+    const studentRef = doc(db, "students", regNo);
+    const studentSnap = await getDoc(studentRef);
 
-    if (querySnapshot.empty) {
+    if (!studentSnap.exists()) {
       throw new Error(`Student with Roll No ${regNo} not found in database.`);
     }
 
-    const studentDoc = querySnapshot.docs[0];
-    const studentData = studentDoc.data();
+    const studentData = studentSnap.data();
     const uid = studentData.uid;
 
     const batch = writeBatch(db);
 
     // 1. Update students collection (Admin view)
-    batch.update(studentDoc.ref, { 
+    batch.set(studentRef, { 
       balance: amount,
+      credits: amount,
       updatedAt: serverTimestamp() 
-    });
+    }, { merge: true });
 
     // 2. Update users collection (Student App wallet) if linked
     if (uid) {
       const userRef = doc(db, "users", uid);
-      batch.update(userRef, { 
+      batch.set(userRef, { 
         walletBalance: amount,
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
     }
 
     // 3. Log transaction
@@ -71,18 +70,19 @@ export const walletService = {
       const regNo = studentData.regNo;
 
       // Update student record
-      batch.update(studentDoc.ref, { 
+      batch.set(studentDoc.ref, { 
         balance: amount,
+        credits: amount,
         updatedAt: serverTimestamp() 
-      });
+      }, { merge: true });
 
       // Update user wallet if linked
       if (uid) {
         const userRef = doc(db, "users", uid);
-        batch.update(userRef, { 
+        batch.set(userRef, { 
           walletBalance: amount,
           updatedAt: serverTimestamp()
-        });
+        }, { merge: true });
       }
 
       count++;
