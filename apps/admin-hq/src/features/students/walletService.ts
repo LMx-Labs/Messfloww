@@ -18,9 +18,20 @@ export const walletService = {
     }
 
     const studentData = studentSnap.data();
-    const uid = studentData.uid;
+    let uid = studentData.uid;
 
     const batch = writeBatch(db);
+
+    // Fallback: If uid is missing, try to find the user by email
+    if (!uid && studentData.email) {
+      const usersQ = query(collection(db, "users"), where("email", "==", studentData.email.toLowerCase().trim()));
+      const usersSnap = await getDocs(usersQ);
+      if (!usersSnap.empty) {
+        uid = usersSnap.docs[0].id;
+        // Backfill the uid on the student doc for future operations
+        batch.set(studentRef, { uid: uid }, { merge: true });
+      }
+    }
 
     // 1. Update students collection (Admin view)
     batch.set(studentRef, { 
@@ -66,8 +77,19 @@ export const walletService = {
 
     for (const studentDoc of querySnapshot.docs) {
       const studentData = studentDoc.data();
-      const uid = studentData.uid;
+      let uid = studentData.uid;
       const regNo = studentData.regNo;
+
+      // Fallback: If uid is missing, try to find the user by email
+      if (!uid && studentData.email) {
+        const usersQ = query(collection(db, "users"), where("email", "==", studentData.email.toLowerCase().trim()));
+        const usersSnap = await getDocs(usersQ);
+        if (!usersSnap.empty) {
+          uid = usersSnap.docs[0].id;
+          // Backfill the uid on the student doc for future operations
+          batch.set(studentDoc.ref, { uid: uid }, { merge: true });
+        }
+      }
 
       // Update student record
       batch.set(studentDoc.ref, { 

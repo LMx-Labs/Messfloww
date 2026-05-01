@@ -194,8 +194,10 @@ export const securePlaceOrder = https.onCall(async (request: https.CallableReque
          const newBal = (studentSnap.data()?.balance || 0) - totalPrice;
          const newCred = (studentSnap.data()?.credits || 0) - totalPrice;
          transaction.update(result.studentRef, { balance: newBal, credits: newCred });
-         // NOTE: walletBalance sync on users/{uid} intentionally removed — saves 4,500 writes/day.
-         // AuthContext re-fetches balance from students collection on session start.
+         
+         // Sync walletBalance to users/{uid} for consistency
+         const userRef = db.collection('users').doc(auth.uid);
+         transaction.update(userRef, { walletBalance: newBal });
          
          const ledgerRef = db.collection('ledger').doc();
          transaction.set(ledgerRef, {

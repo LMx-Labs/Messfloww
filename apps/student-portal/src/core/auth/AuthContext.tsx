@@ -91,7 +91,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isEnrolled: studentData.isNightMessEnrolled === true || ((studentData.balance > 0) && (studentData.status === "active"))
     };
 
-    await setDoc(userDocRef, profile);
+    console.log(`[AuthContext] Building registered profile for ${email} (uid: ${currentUser.uid}, regNo: ${regNo})`);
+    await setDoc(userDocRef, profile, { merge: true });
     return profile;
   }, []);
 
@@ -121,6 +122,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             isEnrolled: latestData.isNightMessEnrolled === true || ((latestData.balance > 0) && (latestData.status === "active"))
           };
           offlineStorage.saveProfile(updatedProfile);
+
+          // Keep users/{uid} in sync with latest balance from students collection
+          if (prev.uid && (prev.walletBalance !== updatedProfile.walletBalance || prev.status !== updatedProfile.status)) {
+            console.log(`[AuthContext] Syncing updated balance (${updatedProfile.walletBalance}) or status to users/${prev.uid}`);
+            const userRef = doc(db, "users", prev.uid);
+            setDoc(userRef, { 
+              walletBalance: updatedProfile.walletBalance,
+              status: updatedProfile.status
+            }, { merge: true }).catch(console.error);
+          }
+
           return updatedProfile;
         });
       }
@@ -184,6 +196,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (regNo) {
+          console.log(`[AuthContext] Resolved regNo ${regNo} for user ${email}`);
           // USER IS INTERNAL
           const profile = await buildRegisteredProfile(currentUser, email, regNo);
           if (profile) {
@@ -205,6 +218,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        console.log(`[AuthContext] User ${email} is external (guest)`);
         // USER IS EXTERNAL (Guest)
         const guestProfile: UserProfile = {
           uid: currentUser.uid,
