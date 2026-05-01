@@ -4,6 +4,7 @@ import { BarcodeScanPage } from "../../features/scan/BarcodeScanPage";
 import { CounterOrderPage } from "../../features/counter/CounterOrderPage";
 import { ExternalOrderPage } from "../../features/external/ExternalOrderPage";
 import { ShopOrderPage } from "../../features/shop/ShopOrderPage";
+import { useAuth } from "../auth/AuthContext";
 
 type TabKey = "scan" | "counter" | "shop" | "external";
 
@@ -15,7 +16,19 @@ const tabs: { key: TabKey; label: string; icon: typeof ScanBarcode }[] = [
 ];
 
 export function KioskLayout() {
+  const { loading } = useAuth();
   const [activeTab, setActiveTab] = useState<TabKey>("scan");
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
+          <p className="text-muted-foreground font-semibold">Initializing Kiosk...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">

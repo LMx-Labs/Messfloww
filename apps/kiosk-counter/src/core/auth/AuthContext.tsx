@@ -24,14 +24,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser({ uid: firebaseUser.uid, email: firebaseUser.email || "kiosk@messflow.local" });
         setLoading(false);
       } else {
-        // No user — sign in anonymously to get a valid auth token for RTDB/Firestore access
+        // No user — try to sign in anonymously
         try {
           await signInAnonymously(auth);
-          // onAuthStateChanged will fire again with the new user
         } catch (err) {
-          console.error("[Kiosk] Anonymous sign-in failed:", err);
-          // Fallback to a fake user so the UI doesn't break, but RTDB calls will fail
-          setUser({ uid: "kiosk_user", email: "kiosk@messflow.local" });
+          console.error("[Kiosk] Anonymous auth failed:", err);
+          // Don't set a fake user. Let it fail so we don't bypass security checks with a fake object.
           setLoading(false);
         }
       }
