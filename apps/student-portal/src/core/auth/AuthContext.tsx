@@ -159,10 +159,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
+        const userDocRef = doc(db, "users", currentUser.uid);
+        let userDocSnap = await getDoc(userDocRef);
+        let currentProfile: UserProfile | null = userDocSnap.exists() ? (userDocSnap.data() as UserProfile) : null;
+
         const registeredDocRef = doc(db, "registered_students", email);
         const registeredDocSnap = await getDoc(registeredDocRef);
         
         let regNo: string | null = null;
+
         if (registeredDocSnap.exists()) {
           regNo = registeredDocSnap.data().regNo;
         } else {
@@ -172,12 +177,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const querySnapshot = await getDocs(q);
           if (!querySnapshot.empty) {
             regNo = querySnapshot.docs[0].data().regNo;
+          } else if (currentProfile?.rollNo && currentProfile.rollNo !== "EXTERNAL") {
+            // Fallback to previously linked rollNo if email match fails (e.g., due to case mismatch)
+            regNo = currentProfile.rollNo;
           }
         }
-
-        const userDocRef = doc(db, "users", currentUser.uid);
-        let userDocSnap = await getDoc(userDocRef);
-        let currentProfile: UserProfile | null = userDocSnap.exists() ? (userDocSnap.data() as UserProfile) : null;
 
         if (regNo) {
           // USER IS INTERNAL
