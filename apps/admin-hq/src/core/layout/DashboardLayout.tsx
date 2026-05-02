@@ -20,8 +20,6 @@ import {
 } from "lucide-react";
 import { useTimeSlots } from "../../features/timeslots/TimeSlotContext";
 import { useAuth } from "../../core/auth/AuthContext";
-import { MASTER_HASH, computeSHA256 } from "./AdminGate";
-
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard, roles: ["manager", "staff"] },
   { name: "Reports", href: "/reports", icon: BarChart3, roles: ["manager", "staff"] },
@@ -53,38 +51,7 @@ export function DashboardLayout() {
   const navigate = useNavigate();
 
   const { activeSlot, autoToggleEnabled, isTabVisible } = useTimeSlots();
-  const { isAuthenticated, logout, role, loading, user, adminUnlocked, setRoleOverride, unlockAdmin, lockAdmin } = useAuth();
-
-  const [showElevateModal, setShowElevateModal] = useState(false);
-  const [elevatePin, setElevatePin] = useState("");
-  const [elevateError, setElevateError] = useState("");
-  const [isElevating, setIsElevating] = useState(false);
-
-  const handleElevateSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsElevating(true);
-    setElevateError("");
-    try {
-      const hash = await computeSHA256(elevatePin);
-      if (hash === MASTER_HASH) {
-        setRoleOverride("manager");
-        unlockAdmin();
-        setShowElevateModal(false);
-        setElevatePin("");
-      } else {
-        setElevateError("Incorrect Master PIN");
-      }
-    } catch (err) {
-      setElevateError("Error verifying PIN");
-    } finally {
-      setIsElevating(false);
-    }
-  };
-
-  const handleDemote = () => {
-    setRoleOverride("staff");
-    lockAdmin();
-  };
+  const { isAuthenticated, logout, role, loading, user } = useAuth();
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -230,9 +197,6 @@ export function DashboardLayout() {
                     >
                       <item.icon className="h-5 w-5 flex-shrink-0" />
                       {sidebarOpen && <span className="flex-1">{item.name}</span>}
-                      {sidebarOpen && !adminUnlocked && (
-                        <Lock className="h-4 w-4 opacity-50" />
-                      )}
                     </Link>
                   </motion.div>
                 );
@@ -277,11 +241,6 @@ export function DashboardLayout() {
               <div className="flex flex-col items-start leading-tight">
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground uppercase font-bold">{role}</span>
-                  {role === "staff" ? (
-                    <button onClick={() => setShowElevateModal(true)} title="Elevate to Manager" className="text-[10px] bg-primary/20 hover:bg-primary/30 text-primary px-1.5 py-0.5 rounded font-bold transition-colors">↑ ELEVATE</button>
-                  ) : (
-                    <button onClick={handleDemote} title="Drop to Staff" className="text-[10px] bg-destructive/20 hover:bg-destructive/30 text-destructive px-1.5 py-0.5 rounded font-bold transition-colors">↓ DROP</button>
-                  )}
                 </div>
                 <span className="text-sm font-semibold">{user?.email?.split('@')[0]}</span>
               </div>
@@ -304,52 +263,6 @@ export function DashboardLayout() {
         </main>
       </div>
 
-      {/* Elevation Modal */}
-      {showElevateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <motion.div 
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="bg-card w-full max-w-sm rounded-2xl p-6 shadow-2xl border border-border"
-          >
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold text-foreground">Elevate to Manager</h3>
-              <button 
-                onClick={() => { setShowElevateModal(false); setElevatePin(""); setElevateError(""); }}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            
-            <form onSubmit={handleElevateSubmit}>
-              <div className="mb-4 relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <input
-                  type="password"
-                  value={elevatePin}
-                  onChange={(e) => setElevatePin(e.target.value)}
-                  placeholder="Master PIN"
-                  className="w-full pl-10 pr-4 py-3 bg-input-background border border-border rounded-xl text-center tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-primary"
-                  autoFocus
-                />
-              </div>
-              
-              {elevateError && (
-                <div className="text-xs text-destructive text-center mb-4 font-semibold">{elevateError}</div>
-              )}
-              
-              <button
-                type="submit"
-                disabled={!elevatePin || isElevating}
-                className="w-full py-3 bg-primary text-primary-foreground font-bold rounded-xl disabled:opacity-50 flex justify-center items-center"
-              >
-                {isElevating ? <div className="h-5 w-5 border-2 border-primary-foreground border-t-transparent animate-spin rounded-full" /> : "Verify & Elevate"}
-              </button>
-            </form>
-          </motion.div>
-        </div>
-      )}
     </div>
   );
 }

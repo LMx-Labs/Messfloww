@@ -35,13 +35,11 @@ export function StudentsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   const filteredStudents = useMemo(() => {
     if (!searchTerm) return studentsFromContext;
     const lowerSearch = searchTerm.toLowerCase();
     return studentsFromContext.filter(s => 
-      s.name.toLowerCase().includes(lowerSearch) ||
       s.regNo.toLowerCase().includes(lowerSearch) ||
       s.email?.toLowerCase().includes(lowerSearch)
     );
