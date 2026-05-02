@@ -36,19 +36,7 @@ export const saveRoles = async (roles: any) => {
   await setDoc(docRef, roles, { merge: true });
 };
 
-export const fetchActionPassword = async () => {
-  const docRef = doc(db, APP_CONFIG_COLLECTION, "passwords");
-  const docSnap = await getDoc(docRef);
-  if (docSnap.exists() && docSnap.data().actionPassword) {
-    return docSnap.data().actionPassword;
-  }
-  return null;
-};
 
-export const saveActionPassword = async (actionPasswordBtoa: string) => {
-  const docRef = doc(db, APP_CONFIG_COLLECTION, "passwords");
-  await setDoc(docRef, { actionPassword: actionPasswordBtoa }, { merge: true });
-};
 
 export const saveStaffPassword = async (staffPasswordBtoa: string) => {
   const docRef = doc(db, APP_CONFIG_COLLECTION, "passwords");

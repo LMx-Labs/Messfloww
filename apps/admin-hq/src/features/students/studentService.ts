@@ -190,11 +190,4 @@ export const deductStudentBalance = async (
   return { success: true, newBalance };
 };
 
-export const fetchActionPassword = async (): Promise<string> => {
-  const settingsRef = doc(db, "settings", "security");
-  const snap = await getDoc(settingsRef);
-  if (snap.exists()) {
-    return atob(snap.data().actionPassword || "");
-  }
-  return "12345"; // Default if not found
-};
+

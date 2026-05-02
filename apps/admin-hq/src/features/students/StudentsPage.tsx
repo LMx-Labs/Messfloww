@@ -4,7 +4,6 @@ import { useStudents } from "../../features/students/StudentContext";
 import { Student } from "@messflow/shared-core";
 import { parseStudentCSV, downloadStudentTemplate, CSVParseResult } from "../../app/utils/csvParser";
 import { EmptyState } from "../../app/components/EmptyState";
-import { checkActionRateLimit, recordFailedAction, resetActionRateLimit } from "../../app/utils/rateLimiter";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import * as studentService from "./studentService";
 import { walletService } from "./walletService";
@@ -16,16 +15,11 @@ export function StudentsPage() {
   const parentRef = useRef<HTMLDivElement>(null);
   
   const [monthlyAmount, setMonthlyAmount] = useState("");
-  const [password, setPassword] = useState("");
   const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [showEditPasswordModal, setShowEditPasswordModal] = useState(false);
   const [showTogglePasswordModal, setShowTogglePasswordModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  
-  const [editPassword, setEditPassword] = useState("");
-  const [togglePassword, setTogglePassword] = useState("");
-  const [deletePassword, setDeletePassword] = useState("");
   
   const [pendingEditId, setPendingEditId] = useState<number | null>(null);
   const [pendingEditBalance, setPendingEditBalance] = useState("");
@@ -41,7 +35,7 @@ export function StudentsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [lockoutSeconds, setLockoutSeconds] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const filteredStudents = useMemo(() => {
     if (!searchTerm) return studentsFromContext;
@@ -60,75 +54,35 @@ export function StudentsPage() {
     overscan: 10,
   });
 
-  useEffect(() => {
-    if (!showBalanceModal && !showEditPasswordModal && !showTogglePasswordModal && !showAddModal && !showDeleteModal) return;
-    const checkLockout = () => {
-      const rateLimit = checkActionRateLimit('students_action');
-      if (!rateLimit.allowed) {
-        setLockoutSeconds(rateLimit.remainingSeconds);
-      } else {
-        setLockoutSeconds(0);
-      }
-    };
-    checkLockout();
-    const interval = setInterval(checkLockout, 1000);
-    return () => clearInterval(interval);
-  }, [showBalanceModal, showEditPasswordModal, showTogglePasswordModal, showAddModal, showDeleteModal]);
+
 
   const handleConfirmAssignBalance = async () => {
-    if (lockoutSeconds > 0) return;
-    const actualPassword = await studentService.fetchActionPassword();
-    if (password !== actualPassword) {
-      recordFailedAction('students_action');
-      toast.error("Incorrect Password");
-      return;
-    }
-    resetActionRateLimit('students_action');
     const amount = parseInt(monthlyAmount);
     if (amount > 0) {
       await walletService.assignMonthlyBalanceToAll(amount);
       setShowBalanceModal(false);
       setMonthlyAmount("");
-      setPassword("");
       toast.success("Balance assigned to all students");
     }
   };
 
   const handleConfirmEditBalance = async () => {
-    if (lockoutSeconds > 0) return;
-    const actualPassword = await studentService.fetchActionPassword();
-    if (editPassword !== actualPassword) {
-      recordFailedAction('students_action');
-      toast.error("Incorrect Password");
-      return;
-    }
-    resetActionRateLimit('students_action');
     const studentToEdit = studentsFromContext.find(s => s.id === pendingEditId);
     if (studentToEdit) {
       try {
         await walletService.topUpWalletByRegNo(studentToEdit.regNo, parseInt(pendingEditBalance) || 0);
         toast.success("Balance updated");
         setShowEditPasswordModal(false);
-        setEditPassword("");
       } catch (error) {
         toast.error("Failed to update balance. Student document might be missing.");
         console.error(error);
       }
     } else {
       setShowEditPasswordModal(false);
-      setEditPassword("");
     }
   };
 
   const handleConfirmToggleStatus = async () => {
-    if (lockoutSeconds > 0) return;
-    const actualPassword = await studentService.fetchActionPassword();
-    if (togglePassword !== actualPassword) {
-      recordFailedAction('students_action');
-      toast.error("Incorrect Password");
-      return;
-    }
-    resetActionRateLimit('students_action');
     const studentToToggle = studentsFromContext.find(s => s.id === pendingToggleId);
     if (studentToToggle) {
       await studentService.updateStudent(studentToToggle.regNo, { 
@@ -137,20 +91,10 @@ export function StudentsPage() {
       toast.success("Status updated");
     }
     setShowTogglePasswordModal(false);
-    setTogglePassword("");
   };
 
   const handleConfirmDelete = async () => {
-    if (lockoutSeconds > 0) return;
     setIsDeleting(true);
-    const actualPassword = await studentService.fetchActionPassword();
-    if (deletePassword !== actualPassword) {
-      recordFailedAction('students_action');
-      toast.error("Incorrect Password");
-      setIsDeleting(false);
-      return;
-    }
-    resetActionRateLimit('students_action');
     const studentToDelete = studentsFromContext.find(s => s.id === pendingDeleteId);
     if (studentToDelete) {
       await studentService.deleteStudentCompletely(studentToDelete.regNo);
@@ -158,7 +102,6 @@ export function StudentsPage() {
     }
     setShowDeleteModal(false);
     setIsDeleting(false);
-    setDeletePassword("");
   };
 
   const handleConfirmAddStudent = async () => {
@@ -263,7 +206,6 @@ export function StudentsPage() {
           <div className="bg-card w-full max-w-md p-8 rounded-3xl border border-border space-y-4">
              <h2>Update Balance</h2>
              <input type="number" value={pendingEditBalance} onChange={(e) => setPendingEditBalance(e.target.value)} className="w-full p-3 bg-muted rounded-lg" />
-             <input type="password" placeholder="Passcode" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} className="w-full p-3 bg-muted rounded-lg" />
              <div className="flex gap-3">
                <button onClick={() => setShowEditPasswordModal(false)} className="flex-1 py-3 bg-muted rounded-xl">Cancel</button>
                <button onClick={handleConfirmEditBalance} className="flex-1 py-3 bg-primary text-primary-foreground rounded-xl">Update</button>
@@ -277,7 +219,6 @@ export function StudentsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="bg-card w-full max-w-md p-8 rounded-3xl border border-border space-y-4">
              <h2>Confirm Status Toggle</h2>
-             <input type="password" placeholder="Passcode" value={togglePassword} onChange={(e) => setTogglePassword(e.target.value)} className="w-full p-3 bg-muted rounded-lg" />
              <div className="flex gap-3">
                <button onClick={() => setShowTogglePasswordModal(false)} className="flex-1 py-3 bg-muted rounded-xl">Cancel</button>
                <button onClick={handleConfirmToggleStatus} className="flex-1 py-3 bg-primary text-primary-foreground rounded-xl">Confirm</button>
@@ -292,7 +233,6 @@ export function StudentsPage() {
           <div className="bg-card w-full max-w-md p-8 rounded-3xl border border-destructive/20 space-y-4">
              <h2 className="text-destructive">Delete Student Account</h2>
              <p className="text-sm opacity-70">This will completely remove the student from the system. This cannot be undone.</p>
-             <input type="password" placeholder="Passcode" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} className="w-full p-3 bg-muted rounded-lg" />
              <div className="flex gap-3">
                <button onClick={() => setShowDeleteModal(false)} className="flex-1 py-3 bg-muted rounded-xl">Cancel</button>
                <button onClick={handleConfirmDelete} disabled={isDeleting} className="flex-1 py-3 bg-destructive text-destructive-foreground rounded-xl">Delete</button>
@@ -307,7 +247,6 @@ export function StudentsPage() {
           <div className="bg-card w-full max-w-md p-8 rounded-3xl border border-border space-y-4">
              <h2>Monthly Credits Reset</h2>
              <input type="number" placeholder="Amount (e.g. 2500)" value={monthlyAmount} onChange={(e) => setMonthlyAmount(e.target.value)} className="w-full p-3 bg-muted rounded-lg" />
-             <input type="password" placeholder="Passcode" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full p-3 bg-muted rounded-lg" />
              <div className="flex gap-3">
                <button onClick={() => setShowBalanceModal(false)} className="flex-1 py-3 bg-muted rounded-xl">Cancel</button>
                <button onClick={handleConfirmAssignBalance} className="flex-1 py-3 bg-primary text-primary-foreground rounded-xl">Assign to All</button>

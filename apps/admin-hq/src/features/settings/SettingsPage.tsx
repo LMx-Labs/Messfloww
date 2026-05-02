@@ -27,7 +27,6 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   
-  const [actionPasswordInput, setActionPasswordInput] = useState("");
   const [managerPasswordInput, setManagerPasswordInput] = useState("");
   const [staffPasswordInput, setStaffPasswordInput] = useState("");
   const [currentPasswordConfirm, setCurrentPasswordConfirm] = useState("");
@@ -64,12 +63,10 @@ export function SettingsPage() {
     }
     try {
         await reauthenticate();
-        if (type === 'action') await settingsService.saveActionPassword(btoa(actionPasswordInput));
         if (type === 'staff') await settingsService.saveStaffPassword(btoa(staffPasswordInput));
         if (type === 'manager') await updatePassword(auth.currentUser!, managerPasswordInput);
         toast.success("Password updated");
         setCurrentPasswordConfirm("");
-        setActionPasswordInput("");
         setManagerPasswordInput("");
         setStaffPasswordInput("");
     } catch (e: any) {
@@ -167,10 +164,7 @@ export function SettingsPage() {
                     <input type="password" value={currentPasswordConfirm} onChange={e => setCurrentPasswordConfirm(e.target.value)} className="w-full bg-background p-3 rounded-lg border border-destructive/20 font-black text-center tracking-widest" />
                 </div>
                 <div className="space-y-4">
-                    <div className="relative">
-                        <input type="password" placeholder="Action PIN" value={actionPasswordInput} onChange={e => setActionPasswordInput(e.target.value)} className="w-full bg-input-background p-4 rounded-xl border border-border font-bold pr-20" />
-                        <button onClick={() => handleUpdatePasswords('action')} className="absolute right-2 top-2 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-black">UPDATE</button>
-                    </div>
+
                     <div className="relative">
                         <input type="password" placeholder="Staff Password" value={staffPasswordInput} onChange={e => setStaffPasswordInput(e.target.value)} className="w-full bg-input-background p-4 rounded-xl border border-border font-bold pr-20" />
                         <button onClick={() => handleUpdatePasswords('staff')} className="absolute right-2 top-2 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-black">UPDATE</button>
