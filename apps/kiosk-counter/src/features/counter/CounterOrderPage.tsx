@@ -7,7 +7,6 @@ import {
   timeSlotService, 
   fetchSettings, 
   getStudentByRegNo, 
-  deductStudentBalance,
   printReceiptSilent, 
   mapOrderToBill,
   mapOrderToKOTs,
@@ -15,8 +14,7 @@ import {
   Student, 
   Order,
   MenuItem,
-  TimeSlot,
-  stockService
+  TimeSlot
 } from "@messflow/shared-core";
 import { toast } from "sonner";
 
@@ -168,33 +166,40 @@ export function CounterOrderPage() {
     }
 
     setIsPlacing(true);
-    const orderId = `CNT-${Date.now().toString().slice(-6)}`;
-    const newOrder: Order = {
-      id: orderId,
-      userId: student.uid || student.regNo,
-      userRollNo: student.regNo,
-      items: cart.map((i: CartItem) => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity })),
-      totalPrice: total,
-      status: "pending",
-      payment_mode: "credit",
-      slotName: activeSlotKey,
-      slotTime: "N/A",
-      orderNumber: Date.now() % 1000,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      isCounterOrder: true,
-      autoPrint: true
-    } as any;
 
     try {
-      const { newBalance } = await deductStudentBalance(student.regNo, total);
-      for (const item of cart) {
-        await stockService.decrementStock(item.id, item.quantity);
-      }
+      const itemsToOrder = cart.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity }));
+      const { id: serverId, orderNumber: serverOrderNumber } = await orderService.placeKioskOrderWithAtomicStock(
+        'counter',
+        itemsToOrder,
+        total,
+        activeSlotKey,
+        'credit',
+        student.regNo
+      );
+
+      // Build order with server-assigned id and order number
+      const newOrder: Order = {
+        id: serverId,
+        userId: student.uid || student.regNo,
+        userRollNo: student.regNo,
+        items: cart.map((i: CartItem) => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity })),
+        totalPrice: total,
+        status: "pending",
+        payment_mode: "credit",
+        slotName: activeSlotKey,
+        slotTime: "N/A",
+        orderNumber: serverOrderNumber,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isCounterOrder: true,
+        autoPrint: true
+      } as any;
+
       const allMenuItems = Object.values(menu).flat();
-      await orderService.pushActiveOrder(newOrder);
       await kotQueueService.routeOrderToCounters(newOrder, counters, allMenuItems);
       
+      const newBalance = student.balance! - total;
       const studentForReceipt = { ...student, balance: newBalance };
       const bill = mapOrderToBill(newOrder as any, studentForReceipt);
       const kots = mapOrderToKOTs(newOrder as any, allMenuItems);

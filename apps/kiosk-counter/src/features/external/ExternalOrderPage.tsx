@@ -12,8 +12,7 @@ import {
   kotQueueService,
   Order,
   MenuItem,
-  TimeSlot,
-  stockService
+  TimeSlot
 } from "@messflow/shared-core";
 import { toast } from "sonner";
 import { useOfflineQueue } from "../../hooks/useOfflineQueue";
@@ -42,7 +41,19 @@ export function ExternalOrderPage() {
   const handleOfflineSync = useCallback(async (order: Order) => {
     // Only try to sync if we're actually online to avoid unnecessary throws
     if (!navigator.onLine) throw new Error("Offline");
-    await orderService.pushActiveOrder(order);
+    
+    // We already have the order id and order number generated locally
+    await orderService.placeKioskOrderWithAtomicStock(
+      'external',
+      order.items,
+      order.totalPrice,
+      order.slotName,
+      order.payment_mode || 'cash',
+      undefined,
+      order.id,
+      order.orderNumber
+    );
+
     const allMenuItems = Object.values(menu).flat();
     await kotQueueService.routeOrderToCounters(order, counters, allMenuItems);
   }, [counters, menu]);
@@ -136,6 +147,7 @@ export function ExternalOrderPage() {
     }
 
     const orderId = `EXT-${Date.now().toString().slice(-6)}`;
+    const orderNumber = Date.now() % 1000;
     const newOrder: Order = {
       id: orderId,
       userId: "EXTERNAL",
@@ -147,7 +159,7 @@ export function ExternalOrderPage() {
       payment_mode: paymentMode,
       slotName: activeSlotKey,
       slotTime: "N/A",
-      orderNumber: Date.now() % 1000,
+      orderNumber: orderNumber,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isExternal: true,
@@ -155,18 +167,23 @@ export function ExternalOrderPage() {
     } as any;
 
     try {
-      // Reduce stock atomically for each cart item
-      for (const item of cart) {
-        await stockService.decrementStock(item.id, item.quantity);
-      }
-      
       const allMenuItems = Object.values(menu).flat();
       
       if (isOffline) {
         enqueue(newOrder);
         toast.success(`Offline Order Saved! ID: ${orderId}`);
       } else {
-        await orderService.pushActiveOrder(newOrder);
+        const itemsToOrder = cart.map((i: CartItem) => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity }));
+        await orderService.placeKioskOrderWithAtomicStock(
+          'external',
+          itemsToOrder,
+          total,
+          activeSlotKey,
+          paymentMode,
+          undefined,
+          orderId,
+          orderNumber
+        );
         await kotQueueService.routeOrderToCounters(newOrder, counters, allMenuItems);
         toast.success(`Order placed successfully! ID: ${orderId}`);
       }

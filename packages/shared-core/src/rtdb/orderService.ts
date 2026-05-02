@@ -228,5 +228,46 @@ export const orderService = {
       console.error("Cloud function securePlaceOrder error:", error);
       throw new Error(error?.message || "Failed to place secure order.");
     }
+  },
+
+  // Method needed for Kiosk App (Counter, External, Shop orders)
+  async placeKioskOrderWithAtomicStock(
+    orderType: 'counter' | 'external' | 'shop',
+    items: OrderItem[],
+    totalPrice: number,
+    slotName: string,
+    paymentMode: string,
+    studentRegNo?: string,
+    existingOrderId?: string,
+    existingOrderNumber?: number
+  ): Promise<{ id: string, orderNumber: number }> {
+    try {
+      const functions = getFunctions(app);
+      const securePlaceKioskOrderFn = httpsCallable(functions, 'securePlaceKioskOrder');
+      
+      const result = await securePlaceKioskOrderFn({
+        cart: items,
+        totalPrice,
+        slotName,
+        orderType,
+        paymentMode,
+        studentRegNo,
+        existingOrderId,
+        existingOrderNumber
+      });
+
+      const data = result.data as any;
+      if (data.success) {
+        return {
+          id: data.orderId,
+          orderNumber: data.orderNumber
+        };
+      } else {
+        throw new Error("Kiosk order creation rejected by server");
+      }
+    } catch (error: any) {
+      console.error("Cloud function securePlaceKioskOrder error:", error);
+      throw new Error(error?.message || `Failed to place ${orderType} order.`);
+    }
   }
 };

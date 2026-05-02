@@ -12,8 +12,7 @@ import {
   kotQueueService,
   Order,
   MenuItem,
-  TimeSlot,
-  stockService
+  TimeSlot
 } from "@messflow/shared-core";
 import { toast } from "sonner";
 import { useOfflineQueue } from "../../hooks/useOfflineQueue";
@@ -41,7 +40,18 @@ export function ShopOrderPage() {
 
   const handleOfflineSync = useCallback(async (order: Order) => {
     if (!navigator.onLine) throw new Error("Offline");
-    await orderService.pushActiveOrder(order);
+    
+    await orderService.placeKioskOrderWithAtomicStock(
+      'shop',
+      order.items,
+      order.totalPrice,
+      order.slotName,
+      order.payment_mode || 'cash',
+      undefined,
+      order.id,
+      order.orderNumber
+    );
+
     const allMenuItems = Object.values(menu).flat();
     await kotQueueService.routeOrderToCounters(order, counters, allMenuItems);
   }, [counters, menu]);
@@ -151,17 +161,23 @@ export function ShopOrderPage() {
     } as any;
 
     try {
-      for (const item of cart) {
-        await stockService.decrementStock(item.id, item.quantity);
-      }
-      
       const allMenuItems = Object.values(menu).flat();
       
       if (isOffline) {
         enqueue(newOrder);
         toast.success(`Offline Shop Order Saved! ID: ${orderId}`);
       } else {
-        await orderService.pushActiveOrder(newOrder);
+        const itemsToOrder = cart.map((i: CartItem) => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity }));
+        await orderService.placeKioskOrderWithAtomicStock(
+          'shop',
+          itemsToOrder,
+          total,
+          activeSlotKey,
+          paymentMode,
+          undefined,
+          orderId,
+          newOrder.orderNumber
+        );
         await kotQueueService.routeOrderToCounters(newOrder, counters, allMenuItems);
         toast.success(`Shop order placed successfully! ID: ${orderId}`);
       }

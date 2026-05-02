@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cancelStalePendingOrders = exports.confirmAndCollectUpiOrder = exports.collectOrder = exports.securePlaceUpiOrder = exports.securePlaceOrder = void 0;
+exports.cancelStalePendingOrders = exports.confirmAndCollectUpiOrder = exports.collectOrder = exports.securePlaceUpiOrder = exports.securePlaceKioskOrder = exports.securePlaceOrder = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const https = __importStar(require("firebase-functions/v2/https"));
@@ -208,8 +208,9 @@ exports.securePlaceOrder = https.onCall(async (request) => {
                 const newBal = (((_a = studentSnap.data()) === null || _a === void 0 ? void 0 : _a.balance) || 0) - totalPrice;
                 const newCred = (((_b = studentSnap.data()) === null || _b === void 0 ? void 0 : _b.credits) || 0) - totalPrice;
                 transaction.update(result.studentRef, { balance: newBal, credits: newCred });
-                // NOTE: walletBalance sync on users/{uid} intentionally removed — saves 4,500 writes/day.
-                // AuthContext re-fetches balance from students collection on session start.
+                // Sync walletBalance to users/{uid} for consistency
+                const userRef = db.collection('users').doc(auth.uid);
+                transaction.update(userRef, { walletBalance: newBal });
                 const ledgerRef = db.collection('ledger').doc();
                 transaction.set(ledgerRef, {
                     type: 'purchase',
@@ -300,6 +301,185 @@ exports.securePlaceOrder = https.onCall(async (request) => {
             throw new https.HttpsError('resource-exhausted', msg);
         }
         throw new https.HttpsError('internal', msg);
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// securePlaceKioskOrder — Server-side processing for Kiosk Counter & External orders
+// ─────────────────────────────────────────────────────────────────────────────
+exports.securePlaceKioskOrder = https.onCall(async (request) => {
+    const { data, auth } = request;
+    // The Kiosk should ideally be authenticated (even anonymously)
+    if (!(auth === null || auth === void 0 ? void 0 : auth.uid)) {
+        throw new https.HttpsError('unauthenticated', 'Kiosk must be authenticated.');
+    }
+    const { cart, totalPrice: clientTotalPrice, slotName, orderType, paymentMode, studentRegNo, existingOrderId, existingOrderNumber } = data;
+    if (!cart || cart.length === 0 || !slotName || !orderType || !paymentMode) {
+        throw new https.HttpsError('invalid-argument', 'Missing required order fields.');
+    }
+    const db = admin.firestore();
+    const rtdb = admin.database();
+    try {
+        // 1. Verify Admin is Online (Kill-Switch)
+        const systemStatusSnap = await rtdb.ref('system_status/admin_online').once('value');
+        if (systemStatusSnap.val() === false) {
+            throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
+        }
+        // 2. Validate Prices
+        const menuPrices = await getMenuPrices(db);
+        let serverTotalPrice = 0;
+        for (const item of cart) {
+            const menuEntry = menuPrices.get(String(item.id));
+            if (menuEntry === undefined) {
+                throw new https.HttpsError('invalid-argument', `Unknown menu item: ${item.name}`);
+            }
+            serverTotalPrice += menuEntry.price * item.qty;
+        }
+        if (Math.abs(clientTotalPrice - serverTotalPrice) > 1) {
+            functions.logger.warn('Price mismatch in kiosk order', { clientPrice: clientTotalPrice, serverPrice: serverTotalPrice });
+            throw new https.HttpsError('invalid-argument', `Price mismatch: expected ₹${serverTotalPrice}, received ₹${clientTotalPrice}.`);
+        }
+        // Generate secure order ID
+        const orderPrefix = orderType === 'counter' ? 'CNT' : orderType === 'shop' ? 'SHP' : 'EXT';
+        const orderId = existingOrderId || `${orderPrefix}-${Date.now().toString().slice(-6)}`;
+        const today = new Date().toISOString().split('T')[0];
+        const dailyCounterRef = db.doc(`orderCounters/${today}`);
+        let orderNumber = existingOrderNumber || 1;
+        // 3. Counter Order Specific Validation (Wallet deduction)
+        if (orderType === 'counter') {
+            if (!studentRegNo) {
+                throw new https.HttpsError('invalid-argument', 'Registration number required for counter orders.');
+            }
+            await db.runTransaction(async (transaction) => {
+                var _a;
+                const studentRef = db.collection('students').doc(studentRegNo);
+                const studentSnap = await transaction.get(studentRef);
+                if (!studentSnap.exists) {
+                    throw new https.HttpsError('not-found', 'Student record not found.');
+                }
+                const studentData = studentSnap.data();
+                if ((studentData === null || studentData === void 0 ? void 0 : studentData.status) === 'disabled') {
+                    throw new https.HttpsError('permission-denied', 'Account is disabled.');
+                }
+                if (paymentMode === 'credit') {
+                    const balance = (studentData === null || studentData === void 0 ? void 0 : studentData.balance) || 0;
+                    if (balance < serverTotalPrice) {
+                        throw new https.HttpsError('resource-exhausted', 'Insufficient wallet balance.');
+                    }
+                    const newBal = balance - serverTotalPrice;
+                    const newCred = ((studentData === null || studentData === void 0 ? void 0 : studentData.credits) || 0) - serverTotalPrice;
+                    transaction.update(studentRef, { balance: newBal, credits: newCred });
+                    if (studentData === null || studentData === void 0 ? void 0 : studentData.uid) {
+                        const userRef = db.collection('users').doc(studentData.uid);
+                        transaction.update(userRef, { walletBalance: newBal });
+                    }
+                    const ledgerRef = db.collection('ledger').doc();
+                    transaction.set(ledgerRef, {
+                        type: 'purchase',
+                        studentRegNo: studentRegNo,
+                        studentUid: (studentData === null || studentData === void 0 ? void 0 : studentData.uid) || 'UNKNOWN',
+                        amount: serverTotalPrice,
+                        orderId: orderId,
+                        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                        description: `Counter Order ${orderId}`
+                    });
+                }
+                if (!existingOrderNumber) {
+                    const counterSnap = await transaction.get(dailyCounterRef);
+                    if (counterSnap.exists) {
+                        orderNumber = (((_a = counterSnap.data()) === null || _a === void 0 ? void 0 : _a.count) || 0) + 1;
+                        transaction.update(dailyCounterRef, { count: orderNumber });
+                    }
+                    else {
+                        transaction.set(dailyCounterRef, { count: orderNumber, date: today });
+                    }
+                }
+            });
+        }
+        else {
+            // External/Shop: Just increment counter
+            if (!existingOrderNumber) {
+                await db.runTransaction(async (transaction) => {
+                    var _a;
+                    const counterSnap = await transaction.get(dailyCounterRef);
+                    if (counterSnap.exists) {
+                        orderNumber = (((_a = counterSnap.data()) === null || _a === void 0 ? void 0 : _a.count) || 0) + 1;
+                        transaction.update(dailyCounterRef, { count: orderNumber });
+                    }
+                    else {
+                        transaction.set(dailyCounterRef, { count: orderNumber, date: today });
+                    }
+                });
+            }
+        }
+        // 4. Atomically decrement RTDB stock
+        const stockReverts = [];
+        for (const item of cart) {
+            const stockRef = rtdb.ref(`menu_stock/${item.id}`);
+            const result = await stockRef.transaction((currentData) => {
+                if (currentData === null)
+                    return currentData;
+                if ((currentData.stock || 0) >= item.qty) {
+                    currentData.stock -= item.qty;
+                    if (currentData.stock <= (currentData.minStock || 0))
+                        currentData.available = false;
+                    return currentData;
+                }
+                return undefined; // Abort
+            });
+            if (!result.committed) {
+                // Revert already-decremented stock
+                for (const revert of stockReverts) {
+                    await revert.ref.transaction((d) => {
+                        if (d !== null) {
+                            d.stock = (d.stock || 0) + revert.qty;
+                            d.available = true;
+                        }
+                        return d;
+                    });
+                }
+                throw new https.HttpsError('resource-exhausted', `Out of stock: ${item.name}`);
+            }
+            stockReverts.push({ ref: stockRef, qty: item.qty });
+        }
+        // 5. Create order in RTDB
+        const enrichedCart = cart.map((item) => {
+            var _a, _b;
+            const menuEntry = menuPrices.get(String(item.id));
+            return {
+                id: item.id,
+                name: (menuEntry === null || menuEntry === void 0 ? void 0 : menuEntry.name) || item.name || 'Unknown Item',
+                price: (_b = (_a = menuEntry === null || menuEntry === void 0 ? void 0 : menuEntry.price) !== null && _a !== void 0 ? _a : item.price) !== null && _b !== void 0 ? _b : 0,
+                qty: item.qty || item.quantity || 1,
+            };
+        });
+        const isExternal = orderType === 'external' || orderType === 'shop';
+        const newOrder = {
+            id: orderId,
+            orderNumber,
+            userId: isExternal ? 'EXTERNAL' : studentRegNo || 'EXTERNAL',
+            userRollNo: isExternal ? 'SHOP' : studentRegNo || 'SHOP',
+            userType: isExternal ? 'guest' : 'student',
+            items: enrichedCart,
+            totalPrice: serverTotalPrice,
+            slotName,
+            payment_mode: paymentMode,
+            status: isExternal ? 'processing' : 'pending',
+            paymentStatus: isExternal ? 'PAID' : (paymentMode === 'credit' ? 'PAID' : 'PENDING'),
+            sync_status: 'cloud',
+            isExternal: isExternal,
+            isCounterOrder: orderType === 'counter',
+            autoPrint: true,
+            createdAt: new Date().toISOString(),
+            timestamp: admin.database.ServerValue.TIMESTAMP,
+        };
+        await rtdb.ref(`active_orders/${orderId}`).set(newOrder);
+        functions.logger.info(`${orderType} order created`, { orderId, amount: serverTotalPrice });
+        return { success: true, orderId, orderNumber };
+    }
+    catch (error) {
+        if (error instanceof https.HttpsError)
+            throw error;
+        throw new https.HttpsError('internal', (error === null || error === void 0 ? void 0 : error.message) || `Failed to place ${orderType} order.`);
     }
 });
 // ─────────────────────────────────────────────────────────────────────────────
