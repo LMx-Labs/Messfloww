@@ -1,4 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
+import { useRouteError, isRouteErrorResponse } from "react-router";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
@@ -81,4 +82,59 @@ export class ErrorBoundary extends Component<Props, State> {
 
     return this.props.children;
   }
+}
+
+export function RouteErrorBoundary() {
+  const error = useRouteError();
+  let errorMessage = "An unexpected error occurred.";
+
+  if (isRouteErrorResponse(error)) {
+    errorMessage = `${error.status} ${error.statusText}: ${typeof error.data === 'string' ? error.data : error.data?.message || JSON.stringify(error.data)}`;
+  } else if (error instanceof Error) {
+    errorMessage = error.message;
+  } else if (typeof error === "string") {
+    errorMessage = error;
+  }
+
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-background p-6">
+      <Card className="max-w-md w-full border-destructive/50 shadow-lg">
+        <CardHeader className="text-center">
+          <div className="flex justify-center mb-4">
+            <div className="p-3 rounded-full bg-destructive/10 text-destructive">
+              <AlertCircle className="h-8 w-8" />
+            </div>
+          </div>
+          <CardTitle className="text-xl text-destructive font-bold">
+            Application Error
+          </CardTitle>
+          <CardDescription className="text-muted-foreground font-medium">
+            Something went wrong while loading this page.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="bg-muted p-3 rounded-md text-xs font-mono overflow-auto max-h-[120px] border border-border">
+            {errorMessage}
+          </div>
+        </CardContent>
+        <CardFooter className="flex flex-col gap-3">
+          <Button 
+            onClick={() => window.location.href = "/"}
+            variant="default"
+            className="w-full font-bold"
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Return to Dashboard
+          </Button>
+          <Button 
+            onClick={() => window.location.reload()}
+            variant="outline"
+            className="w-full"
+          >
+            Reload Page
+          </Button>
+        </CardFooter>
+      </Card>
+    </div>
+  );
 }
