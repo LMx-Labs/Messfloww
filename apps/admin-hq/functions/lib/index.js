@@ -33,7 +33,12 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cancelStalePendingOrders = exports.confirmAndCollectUpiOrder = exports.collectOrder = exports.securePlaceUpiOrder = exports.securePlaceKioskOrder = exports.securePlaceOrder = void 0;
+exports.reconcileIncompleteIntents = exports.cancelStalePendingOrders = exports.confirmAndCollectUpiOrder = exports.collectOrder = exports.securePlaceUpiOrder = exports.securePlaceKioskOrder = exports.securePlaceOrder = void 0;
+exports.acquireRtdbLeases = acquireRtdbLeases;
+exports.commitRtdbLeases = commitRtdbLeases;
+exports.releaseRtdbLeases = releaseRtdbLeases;
+exports.refundStudentWallet = refundStudentWallet;
+exports.reconcileIntent = reconcileIntent;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const https = __importStar(require("firebase-functions/v2/https"));
@@ -75,30 +80,276 @@ function generateSecureOrderId() {
     return `MFW-${(0, crypto_1.randomUUID)().replace(/-/g, '').substring(0, 12).toUpperCase()}`;
 }
 /**
- * Hourly Cron Job: Processes active report subscriptions and emails them.
- * Efficiency constraints: Limit queries, optimize sends.
+ * acquireRtdbLeases:
+ * Atomically acquires two-phase inventory leases on RTDB with INLINE OCC LAZY LEASE RECLAMATION and FENCING.
+ * Generates and associates an immutable fenceToken with the active lease.
+ * If any expired leases exist on an item, they are reclaimed on the spot inside the single-threaded OCC callback.
+ * If stock is sufficient, reserves the requested quantity and records activeLeases[intentId].
+ * If any item fails, rolls back all preceding acquired leases.
  */
-// processSubscriptions: removed — email reporting feature not active.
+async function acquireRtdbLeases(rtdb, cart, intentId, leaseDurationMs = 120 * 1000, // 120s default for credit checkout
+fenceToken) {
+    const acquiredLeases = [];
+    const now = Date.now();
+    const expiresAt = now + leaseDurationMs;
+    const token = fenceToken || `${intentId}-${now}-${(0, crypto_1.randomUUID)().replace(/-/g, '').slice(0, 8)}`;
+    for (const item of cart) {
+        const itemIdStr = String(item.id);
+        const stockRef = rtdb.ref(`menu_stock/${itemIdStr}`);
+        const qty = Number(item.qty || 1);
+        const txResult = await stockRef.transaction((currentData) => {
+            if (currentData === null)
+                return currentData;
+            // ── INLINE OCC LAZY LEASE RECLAMATION ──
+            // Reclaim dead leases on this item before checking available stock
+            if (currentData.activeLeases && typeof currentData.activeLeases === 'object') {
+                for (const [otherIntentId, lease] of Object.entries(currentData.activeLeases)) {
+                    if (lease && typeof lease.expiresAt === 'number' && lease.expiresAt < now) {
+                        const expiredQty = Number(lease.qty || 0);
+                        currentData.stock = (currentData.stock || 0) + expiredQty;
+                        currentData.reserved = Math.max(0, (currentData.reserved || 0) - expiredQty);
+                        delete currentData.activeLeases[otherIntentId];
+                        if (currentData.stock > (currentData.minStock || 0)) {
+                            currentData.available = true;
+                        }
+                    }
+                }
+            }
+            // Check if available unreserved stock is sufficient
+            if ((currentData.stock || 0) >= qty) {
+                currentData.stock = (currentData.stock || 0) - qty;
+                currentData.reserved = (currentData.reserved || 0) + qty;
+                if (!currentData.activeLeases)
+                    currentData.activeLeases = {};
+                currentData.activeLeases[intentId] = { qty, expiresAt, fenceToken: token };
+                if (currentData.stock <= (currentData.minStock || 0)) {
+                    currentData.available = false;
+                }
+                return currentData;
+            }
+            return undefined; // Abort transaction — insufficient stock
+        });
+        if (!txResult.committed) {
+            // Rollback all previously acquired leases for this cart
+            for (const acquired of acquiredLeases) {
+                await acquired.ref.transaction((d) => {
+                    if (d !== null) {
+                        if (d.activeLeases && d.activeLeases[intentId]) {
+                            const leasedQty = d.activeLeases[intentId].qty || acquired.qty;
+                            d.stock = (d.stock || 0) + leasedQty;
+                            d.reserved = Math.max(0, (d.reserved || 0) - leasedQty);
+                            delete d.activeLeases[intentId];
+                            if (d.stock > (d.minStock || 0))
+                                d.available = true;
+                        }
+                    }
+                    return d;
+                });
+            }
+            return { success: false, failedItemName: item.name };
+        }
+        acquiredLeases.push({ ref: stockRef, qty, itemId: itemIdStr });
+    }
+    return { success: true, fenceToken: token };
+}
 /**
- * securePlaceOrder: The "Aspirin Logic" Checkout Flow
- * 1. Checks if Admin is Online.
- * 2. Checks if the student's status is "active".
- * 3. Checks if wallet balance is sufficient.
- * 4. Checks RTDB stock counts.
- * 5. Atomically performs deductions and creates the order.
+ * commitRtdbLeases:
+ * Finalizes two-phase inventory reservation into permanent commitment with FENCING VALIDATION.
+ * Validates that activeLeases[intentId] is still actively owned and matching fenceToken.
+ * If lease was expired, revoked, or stolen by inline OCC reclamation, the transaction ABORTS.
+ * Returns { success: true } if all items committed, or { success: false, reason, failedItemName } if fenced out.
  */
+async function commitRtdbLeases(rtdb, cart, intentId, fenceToken) {
+    for (const item of cart) {
+        const stockRef = rtdb.ref(`menu_stock/${item.id}`);
+        const txResult = await stockRef.transaction((currentData) => {
+            if (currentData === null)
+                return currentData;
+            if (currentData.activeLeases && currentData.activeLeases[intentId]) {
+                const lease = currentData.activeLeases[intentId];
+                // If fencing token is specified, verify ownership match
+                if (fenceToken && lease.fenceToken && lease.fenceToken !== fenceToken) {
+                    return undefined; // Mismatch: lease was superseded!
+                }
+                const leasedQty = lease.qty || item.qty;
+                currentData.reserved = Math.max(0, (currentData.reserved || 0) - leasedQty);
+                delete currentData.activeLeases[intentId];
+                return currentData;
+            }
+            // LEASE REVOKED / MISSING / RECLAIMED!
+            // Abort transaction because reservation is no longer owned!
+            return undefined;
+        });
+        if (!txResult.committed) {
+            return {
+                success: false,
+                reason: 'LEASE_FENCING_REVOKED',
+                failedItemName: item.name || String(item.id)
+            };
+        }
+    }
+    return { success: true };
+}
+/**
+ * releaseRtdbLeases:
+ * Compensating transaction: restores stock, decrements reserved count, and removes active lease.
+ * Supports fenceToken validation so it does not release someone else's superseded lease.
+ */
+async function releaseRtdbLeases(rtdb, cart, intentId, fenceToken) {
+    for (const item of cart) {
+        const stockRef = rtdb.ref(`menu_stock/${item.id}`);
+        await stockRef.transaction((currentData) => {
+            if (currentData === null)
+                return currentData;
+            if (currentData.activeLeases && currentData.activeLeases[intentId]) {
+                const lease = currentData.activeLeases[intentId];
+                if (fenceToken && lease.fenceToken && lease.fenceToken !== fenceToken) {
+                    return currentData; // Don't release someone else's superseded lease
+                }
+                const leasedQty = lease.qty || item.qty;
+                currentData.stock = (currentData.stock || 0) + leasedQty;
+                currentData.reserved = Math.max(0, (currentData.reserved || 0) - leasedQty);
+                delete currentData.activeLeases[intentId];
+                if (currentData.stock > (currentData.minStock || 0)) {
+                    currentData.available = true;
+                }
+            }
+            return currentData;
+        });
+    }
+}
+/**
+ * refundStudentWallet:
+ * Immutable refund helper for financial consistency restoration.
+ * Credits student balance/credits, syncs users/{uid}, logs ledger audit trail, and cancels intent.
+ */
+async function refundStudentWallet(db, intent, reason) {
+    await db.runTransaction(async (tx) => {
+        var _a, _b, _c;
+        const studentRef = db.collection('students').doc(intent.userRollNo);
+        const studentSnap = await tx.get(studentRef);
+        if (studentSnap.exists) {
+            const bal = ((_a = studentSnap.data()) === null || _a === void 0 ? void 0 : _a.balance) || 0;
+            const cred = ((_b = studentSnap.data()) === null || _b === void 0 ? void 0 : _b.credits) || 0;
+            tx.update(studentRef, { balance: bal + intent.totalPrice, credits: cred + intent.totalPrice });
+        }
+        const userRef = db.collection('users').doc(intent.userId);
+        const userSnap = await tx.get(userRef);
+        if (userSnap.exists) {
+            const uBal = ((_c = userSnap.data()) === null || _c === void 0 ? void 0 : _c.walletBalance) || 0;
+            tx.update(userRef, { walletBalance: uBal + intent.totalPrice });
+        }
+        const ledgerRef = db.collection('ledger').doc();
+        tx.set(ledgerRef, {
+            type: 'refund',
+            studentRegNo: intent.userRollNo,
+            studentUid: intent.userId,
+            amount: intent.totalPrice,
+            orderId: intent.orderId,
+            intentId: intent.intentId,
+            reason,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            description: `Auto-refund for order ${intent.orderId}: ${reason}`
+        });
+        tx.update(db.collection('transaction_intents').doc(intent.intentId), {
+            state: 'CANCELLED',
+            errorMessage: reason,
+            'journal.rtdbLeaseReleased': true,
+            reconciledAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+    });
+}
+/**
+ * reconcileIntent:
+ * Core deterministic recovery worker. Resolves incomplete transaction intents across Firestore and RTDB.
+ * Evaluates the journal bitmask:
+ * - If firestoreWalletDebited == true: executes FORWARD RECOVERY (dispatches active_orders and commits leases).
+ *   If forward recovery fails after retries, executes backward refund to ensure financial consistency.
+ * - If firestoreWalletDebited == false: executes BACKWARD COMPENSATION (releases RTDB leases, cancels intent).
+ */
+async function reconcileIntent(db, rtdb, intentId, intent) {
+    var _a, _b, _c, _d;
+    const intentRef = db.collection('transaction_intents').doc(intentId);
+    if ((_a = intent.journal) === null || _a === void 0 ? void 0 : _a.firestoreWalletDebited) {
+        functions.logger.info('Reconciler: forward recovery for financially committed intent', { intentId, orderId: intent.orderId });
+        try {
+            // Verify or create RTDB active order
+            const orderRef = rtdb.ref(`active_orders/${intent.orderId}`);
+            const orderSnap = await orderRef.once('value');
+            if (!orderSnap.exists()) {
+                await orderRef.set({
+                    id: intent.orderId,
+                    intentId,
+                    orderNumber: intent.orderNumber || 0,
+                    userId: intent.userId,
+                    userRollNo: intent.userRollNo,
+                    items: intent.cart,
+                    totalPrice: intent.totalPrice,
+                    slotName: intent.slotName,
+                    payment_mode: intent.paymentMode,
+                    status: 'ordered',
+                    sync_status: 'cloud',
+                    estimatedServingWindow: intent.estimatedServingWindow || 'Soon',
+                    createdAt: new Date().toISOString(),
+                    timestamp: admin.database.ServerValue.TIMESTAMP
+                });
+            }
+            const commitRes = await commitRtdbLeases(rtdb, intent.cart, intentId, (_b = intent.journal) === null || _b === void 0 ? void 0 : _b.fenceToken);
+            if (!commitRes.success) {
+                throw new Error(`Reconciler lease fencing failure: ${commitRes.reason || 'lease was reclaimed'}`);
+            }
+            await intentRef.update({
+                state: 'COMMITTED',
+                'journal.rtdbOrderDispatched': true,
+                'journal.rtdbLeaseReleased': true,
+                reconciledAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            return;
+        }
+        catch (fwdErr) {
+            functions.logger.error('Reconciler forward recovery failed, falling back to refund', { intentId, fwdErr });
+            await refundStudentWallet(db, intent, 'Forward recovery dispatch or fencing failed; student wallet refunded.');
+            await releaseRtdbLeases(rtdb, intent.cart, intentId, (_c = intent.journal) === null || _c === void 0 ? void 0 : _c.fenceToken);
+        }
+    }
+    else {
+        // Money not debited — release leases and cancel intent
+        functions.logger.info('Reconciler: releasing expired lease for un-debited intent', { intentId });
+        await releaseRtdbLeases(rtdb, intent.cart, intentId, (_d = intent.journal) === null || _d === void 0 ? void 0 : _d.fenceToken);
+        await intentRef.update({
+            state: 'CANCELLED',
+            'journal.rtdbLeaseReleased': true,
+            errorMessage: 'Lease expired prior to financial commit; stock restored.',
+            reconciledAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+    }
+}
 exports.securePlaceOrder = https.onCall(async (request) => {
-    var _a;
+    var _a, _b, _c, _d, _e, _f;
     const { data, auth } = request;
     if (!(auth === null || auth === void 0 ? void 0 : auth.uid)) {
         throw new https.HttpsError('unauthenticated', 'You must be logged in to place an order.');
     }
-    const { cart, totalPrice, slotName, paymentMode } = data;
-    if (!cart || cart.length === 0 || !totalPrice || !slotName) {
+    const { cart, totalPrice: clientTotalPrice, slotName, paymentMode, idempotencyKey } = data;
+    if (!cart || cart.length === 0 || !clientTotalPrice || !slotName) {
         throw new https.HttpsError('invalid-argument', 'Missing required order fields.');
     }
     const db = admin.firestore();
     const rtdb = admin.database();
+    // Deterministic intent identifier for cross-resource correlation and idempotency
+    const intentId = (idempotencyKey && typeof idempotencyKey === 'string' && idempotencyKey.trim().length > 0)
+        ? idempotencyKey.trim()
+        : generateSecureOrderId();
+    const intentRef = db.collection('transaction_intents').doc(intentId);
+    let orderId = '';
+    let orderNumber = 1;
+    let estimatedServingWindow = 'Soon';
+    let enrichedCart = [];
+    let serverTotalPrice = 0;
+    let newOrder = null;
     try {
         // 1. Verify Admin is Online (Kill-Switch)
         const systemStatusSnap = await rtdb.ref('system_status/admin_online').once('value');
@@ -106,147 +357,53 @@ exports.securePlaceOrder = https.onCall(async (request) => {
         if (isAdminOnline === false) {
             throw new https.HttpsError('failed-precondition', 'Admin is offline. Orders cannot be placed at this time.');
         }
-        // Generate cryptographically secure, non-guessable order ID
-        const orderId = generateSecureOrderId();
-        // Get order counter for today
+        // 2. Server-side price validation (Closing Price Spoofing Flaw)
+        const menuPrices = await getMenuPrices(db);
+        for (const item of cart) {
+            const menuEntry = menuPrices.get(String(item.id));
+            if (menuEntry === undefined) {
+                throw new https.HttpsError('invalid-argument', `Unknown menu item: ${item.name || item.id}`);
+            }
+            const qty = Number(item.qty || item.quantity || 1);
+            serverTotalPrice += menuEntry.price * qty;
+        }
+        if (Math.abs(clientTotalPrice - serverTotalPrice) > 1) {
+            functions.logger.warn('Price spoofing detected in securePlaceOrder', {
+                uid: auth.uid, clientPrice: clientTotalPrice, serverPrice: serverTotalPrice
+            });
+            throw new https.HttpsError('invalid-argument', `Price mismatch: expected ₹${serverTotalPrice}, received ₹${clientTotalPrice}.`);
+        }
+        // 3. Pre-read and validate user & student status in Firestore
+        orderId = generateSecureOrderId();
         const today = new Date().toISOString().split('T')[0];
         const dailyCounterRef = db.doc(`orderCounters/${today}`);
-        const result = await db.runTransaction(async (transaction) => {
-            var _a, _b;
-            // 2. Load User and Student records
-            const userRef = db.collection('users').doc(auth.uid);
-            const userSnap = await transaction.get(userRef);
-            if (!userSnap.exists) {
-                throw new https.HttpsError('not-found', 'User profile not found.');
-            }
-            const rollNo = (_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.rollNo;
-            if (!rollNo || rollNo === 'UNREGISTERED' || rollNo === 'EXTERNAL') {
-                throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order with credits.');
-            }
-            const studentRef = db.collection('students').doc(rollNo);
-            const studentSnap = await transaction.get(studentRef);
-            if (!studentSnap.exists) {
-                throw new https.HttpsError('not-found', 'Student record not found.');
-            }
-            const studentData = studentSnap.data();
-            // Verify Status
-            if ((studentData === null || studentData === void 0 ? void 0 : studentData.status) === 'disabled') {
-                throw new https.HttpsError('permission-denied', 'Account has been disabled. Order denied.');
-            }
-            // 3. Check Wallet Balance if paying by credit
-            if (paymentMode === 'credit') {
-                const balance = (studentData === null || studentData === void 0 ? void 0 : studentData.balance) || 0;
-                if (balance < totalPrice) {
-                    throw new https.HttpsError('resource-exhausted', 'Insufficient wallet balance.');
-                }
-            }
-            // Read Daily Counter for receipt number
-            const counterSnap = await transaction.get(dailyCounterRef);
-            let orderNumber = 1;
-            if (counterSnap.exists) {
-                orderNumber = (((_b = counterSnap.data()) === null || _b === void 0 ? void 0 : _b.count) || 0) + 1;
-            }
-            // We cannot easily lock RTDB stock inside a Firestore transaction.
-            // So we will optimistically decrement Firestore, then try RTDB.
-            // If RTDB fails, we revert Firestore. This is cross-DB pseudo-transaction.
-            // A better way is using Admin SDK to check stock via RTDB transaction FIRST.
-            // Wait, let's do RTDB transaction inside Firestore transaction? It's async. We can!
-            return { userSnap, studentRef, studentData, dailyCounterRef, orderNumber, counterExists: counterSnap.exists };
-        });
-        // 4. Perform RTDB Stock checks and deductions atomically for ALL items
-        // Using multi-path update to decrement stock IF stock is sufficient.
-        // However, multi-path update cannot do conditional checks directly without Security Rules.
-        // Instead, we can read stock, check array, and write back in one transaction on the root /menu_stock, 
-        // or just run a transaction on each item.
-        // Let's do parallel transactions on RTDB for stock.
-        const stockReverts = [];
-        let stockFailed = false;
-        let failedItemName = '';
-        for (const item of cart) {
-            const stockRef = rtdb.ref(`menu_stock/${item.id}`);
-            const fallbackResult = await stockRef.transaction((currentData) => {
-                if (currentData === null)
-                    return currentData;
-                if ((currentData.stock || 0) >= item.qty) {
-                    currentData.stock -= item.qty;
-                    if (currentData.stock <= (currentData.minStock || 0)) {
-                        currentData.available = false;
-                    }
-                    return currentData;
-                }
-                return undefined; // Abort transaction
-            });
-            if (!fallbackResult.committed) {
-                stockFailed = true;
-                failedItemName = item.name;
-                break;
-            }
-            else {
-                stockReverts.push({ ref: stockRef, qty: item.qty });
-            }
+        const userRef = db.collection('users').doc(auth.uid);
+        const userSnap = await userRef.get();
+        if (!userSnap.exists) {
+            throw new https.HttpsError('not-found', 'User profile not found.');
         }
-        if (stockFailed) {
-            // Revert any decremented stock
-            for (const revert of stockReverts) {
-                await revert.ref.transaction((currentData) => {
-                    if (currentData !== null) {
-                        currentData.stock = (currentData.stock || 0) + revert.qty;
-                        if (currentData.stock > (currentData.minStock || 0)) {
-                            currentData.available = true;
-                        }
-                    }
-                    return currentData;
-                });
-            }
-            throw new https.HttpsError('resource-exhausted', `Out of stock: ${failedItemName}`);
+        const rollNo = (_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.rollNo;
+        if (!rollNo || rollNo === 'UNREGISTERED' || rollNo === 'EXTERNAL') {
+            throw new https.HttpsError('failed-precondition', 'You must be a registered student to place an order with credits.');
         }
-        // Now complete the Firestore wallet deduction securely
-        await db.runTransaction(async (transaction) => {
+        const studentRef = db.collection('students').doc(rollNo);
+        const studentSnap = await studentRef.get();
+        if (!studentSnap.exists) {
+            throw new https.HttpsError('not-found', 'Student record not found.');
+        }
+        const studentData = studentSnap.data();
+        if ((studentData === null || studentData === void 0 ? void 0 : studentData.status) === 'disabled') {
+            throw new https.HttpsError('permission-denied', 'Account has been disabled. Order denied.');
+        }
+        // Read Daily Counter for receipt number
+        const counterSnap = await dailyCounterRef.get();
+        if (counterSnap.exists) {
+            orderNumber = (((_b = counterSnap.data()) === null || _b === void 0 ? void 0 : _b.count) || 0) + 1;
+        }
+        // Prepare enriched cart items
+        enrichedCart = cart.map((item) => {
             var _a, _b;
-            const studentSnap = await transaction.get(result.studentRef);
-            if (paymentMode === 'credit') {
-                const newBal = (((_a = studentSnap.data()) === null || _a === void 0 ? void 0 : _a.balance) || 0) - totalPrice;
-                const newCred = (((_b = studentSnap.data()) === null || _b === void 0 ? void 0 : _b.credits) || 0) - totalPrice;
-                transaction.update(result.studentRef, { balance: newBal, credits: newCred });
-                // Sync walletBalance to users/{uid} for consistency
-                const userRef = db.collection('users').doc(auth.uid);
-                transaction.update(userRef, { walletBalance: newBal });
-                const ledgerRef = db.collection('ledger').doc();
-                transaction.set(ledgerRef, {
-                    type: 'purchase',
-                    studentRegNo: result.studentData.regNo,
-                    studentUid: auth.uid,
-                    amount: totalPrice,
-                    orderId: orderId,
-                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                    description: `Order ${orderId}`
-                });
-            }
-            if (result.counterExists) {
-                transaction.update(result.dailyCounterRef, { count: result.orderNumber });
-            }
-            else {
-                transaction.set(result.dailyCounterRef, { count: result.orderNumber, date: today });
-            }
-        });
-        // 5. Create Order in RTDB
-        const nowTimestamp = Date.now();
-        const messStatusSnap = await rtdb.ref('mess_status').once('value');
-        const currentlyServing = messStatusSnap.exists() ? messStatusSnap.val().currentlyServing || 0 : 0;
-        const queuePosition = Math.max(0, result.orderNumber - currentlyServing);
-        const waitTimeSeconds = queuePosition * 3; // 3 seconds per order
-        // Calculate estimate window
-        const startTimeDate = new Date(nowTimestamp + waitTimeSeconds * 1000);
-        const endTimeDate = new Date(startTimeDate.getTime() + 180 * 1000);
-        const formatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-        // Keep it generic or use JS formatting
-        const estimatedServingWindow = `${formatter.format(startTimeDate)} - ${formatter.format(endTimeDate)}`;
-        // Enrich cart items with canonical names & prices from Firestore menu
-        // This prevents "Unknown Item" errors in scanning/KDS downstream
-        const menuItems = await getMenuPrices(db);
-        const enrichedCart = cart.map((item) => {
-            var _a, _b;
-            const menuEntry = menuItems.get(String(item.id));
+            const menuEntry = menuPrices.get(String(item.id));
             return {
                 id: item.id,
                 name: (menuEntry === null || menuEntry === void 0 ? void 0 : menuEntry.name) || item.name || 'Unknown Item',
@@ -254,13 +411,206 @@ exports.securePlaceOrder = https.onCall(async (request) => {
                 qty: item.qty || item.quantity || 1,
             };
         });
-        const newOrder = {
-            id: orderId,
-            orderNumber: result.orderNumber,
+        // ── STEP 1: ATOMIC INTENT ENTRY GATE (Defeating TOCTOU Race & Fencing Initialization) ──
+        const leaseDurationMs = 120 * 1000; // 120s TTL
+        const nowMs = Date.now();
+        const fenceToken = `${intentId}-${nowMs}-${(0, crypto_1.randomUUID)().replace(/-/g, '').slice(0, 8)}`;
+        const initialIntent = {
+            intentId,
+            orderId,
             userId: auth.uid,
-            userRollNo: result.studentData.regNo,
+            userRollNo: rollNo,
+            cart: enrichedCart,
+            totalPrice: serverTotalPrice,
+            slotName,
+            paymentMode,
+            state: 'INITIALIZED',
+            leaseExpiresAt: nowMs + leaseDurationMs,
+            journal: {
+                rtdbLeaseAcquired: false,
+                firestoreWalletDebited: false,
+                rtdbOrderDispatched: false,
+                rtdbLeaseReleased: false,
+                fenceToken,
+            },
+            orderNumber,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        let isNewIntent = false;
+        let existingIntent = null;
+        try {
+            // ATOMIC INSERTION: Fails with ALREADY_EXISTS if doc exists
+            await intentRef.create(initialIntent);
+            isNewIntent = true;
+        }
+        catch (createErr) {
+            const errCode = createErr === null || createErr === void 0 ? void 0 : createErr.code;
+            const errMsg = String((createErr === null || createErr === void 0 ? void 0 : createErr.message) || '');
+            if (errCode === 6 || errCode === 'already-exists' || errMsg.includes('ALREADY_EXISTS') || errMsg.includes('already exists')) {
+                const snap = await intentRef.get();
+                if (snap.exists) {
+                    existingIntent = snap.data();
+                }
+            }
+            else {
+                throw createErr;
+            }
+        }
+        if (!isNewIntent && existingIntent) {
+            // Scenario A: Order already fully committed -> return existing receipt with zero writes
+            if (existingIntent.state === 'COMMITTED') {
+                functions.logger.info('ARCH-B: Idempotent replay hit for committed order', { intentId, orderId: existingIntent.orderId });
+                return {
+                    success: true,
+                    orderId: existingIntent.orderId,
+                    orderNumber: existingIntent.orderNumber,
+                    estimatedServingWindow: existingIntent.estimatedServingWindow || 'Soon',
+                    idempotentReplay: true
+                };
+            }
+            // Scenario B: Order was financially debited but dispatch failed -> execute forward recovery with fencing
+            if (existingIntent.state === 'FINANCIALLY_COMMITTED') {
+                functions.logger.info('ARCH-B: Idempotent retry triggered forward recovery', { intentId, orderId: existingIntent.orderId });
+                const commitRes = await commitRtdbLeases(rtdb, existingIntent.cart, intentId, (_c = existingIntent.journal) === null || _c === void 0 ? void 0 : _c.fenceToken);
+                if (!commitRes.success) {
+                    functions.logger.error('ARCH-B: Forward recovery fencing failed on commit — refunding student', { intentId, commitRes });
+                    await refundStudentWallet(db, existingIntent, 'Forward recovery fencing failed; stock was reclaimed.');
+                    throw new https.HttpsError('deadline-exceeded', 'Order reservation expired during processing. Your wallet has been refunded.');
+                }
+                await rtdb.ref(`active_orders/${existingIntent.orderId}`).set({
+                    id: existingIntent.orderId,
+                    intentId,
+                    orderNumber: existingIntent.orderNumber,
+                    userId: existingIntent.userId,
+                    userRollNo: existingIntent.userRollNo,
+                    items: existingIntent.cart,
+                    totalPrice: existingIntent.totalPrice,
+                    slotName: existingIntent.slotName,
+                    payment_mode: existingIntent.paymentMode,
+                    status: 'ordered',
+                    sync_status: 'cloud',
+                    estimatedServingWindow: existingIntent.estimatedServingWindow || 'Soon',
+                    createdAt: new Date().toISOString(),
+                    timestamp: admin.database.ServerValue.TIMESTAMP
+                });
+                await intentRef.update({
+                    state: 'COMMITTED',
+                    'journal.rtdbOrderDispatched': true,
+                    'journal.rtdbLeaseReleased': true,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+                return {
+                    success: true,
+                    orderId: existingIntent.orderId,
+                    orderNumber: existingIntent.orderNumber,
+                    estimatedServingWindow: existingIntent.estimatedServingWindow || 'Soon',
+                    recovered: true
+                };
+            }
+            // Scenario C: Transaction in-flight and lease is not expired -> reject concurrent re-entry
+            if ((existingIntent.state === 'INITIALIZED' || existingIntent.state === 'RESERVED') && Date.now() < existingIntent.leaseExpiresAt) {
+                throw new https.HttpsError('already-exists', 'Transaction is currently processing. Please wait.');
+            }
+            // Scenario D: Prior attempt was cancelled or failed -> prompt user for fresh cart
+            if (existingIntent.state === 'CANCELLED' || existingIntent.state === 'FAILED') {
+                throw new https.HttpsError('failed-precondition', `Previous order attempt was aborted: ${existingIntent.errorMessage || 'Order cancelled'}. Please start a new order.`);
+            }
+        }
+        // Live Balance pre-check for first-time execution
+        if (paymentMode === 'credit') {
+            const balance = (studentData === null || studentData === void 0 ? void 0 : studentData.balance) || 0;
+            if (balance < serverTotalPrice) {
+                await intentRef.update({
+                    state: 'FAILED',
+                    errorMessage: 'Insufficient wallet balance',
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                }).catch(() => { });
+                throw new https.HttpsError('resource-exhausted', 'Insufficient wallet balance.');
+            }
+        }
+        // ── STEP 2: TWO-PHASE INVENTORY LEASE ON RTDB (with Inline OCC Lazy Reclamation & Fencing) ──
+        const leaseResult = await acquireRtdbLeases(rtdb, cart, intentId, leaseDurationMs, fenceToken);
+        if (!leaseResult.success) {
+            await intentRef.update({
+                state: 'FAILED',
+                errorMessage: `Out of stock: ${leaseResult.failedItemName || 'Item'}`,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }).catch(() => { });
+            throw new https.HttpsError('resource-exhausted', `Out of stock: ${leaseResult.failedItemName}`);
+        }
+        // Mark intent as RESERVED
+        await intentRef.update({
+            state: 'RESERVED',
+            'journal.rtdbLeaseAcquired': true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        // ── STEP 3: FIRESTORE FINANCIAL COMMIT & ATOMIC JOURNAL UPDATE ──
+        await db.runTransaction(async (transaction) => {
+            const liveStudentSnap = await transaction.get(studentRef);
+            if (!liveStudentSnap.exists) {
+                throw new https.HttpsError('not-found', 'Student record not found.');
+            }
+            const liveStudent = liveStudentSnap.data();
+            if ((liveStudent === null || liveStudent === void 0 ? void 0 : liveStudent.status) === 'disabled') {
+                throw new https.HttpsError('permission-denied', 'Account has been disabled.');
+            }
+            if (paymentMode === 'credit') {
+                const liveBal = (liveStudent === null || liveStudent === void 0 ? void 0 : liveStudent.balance) || 0;
+                if (liveBal < serverTotalPrice) {
+                    throw new https.HttpsError('resource-exhausted', 'Insufficient wallet balance.');
+                }
+                const newBal = liveBal - serverTotalPrice;
+                const newCred = ((liveStudent === null || liveStudent === void 0 ? void 0 : liveStudent.credits) || 0) - serverTotalPrice;
+                transaction.update(studentRef, { balance: newBal, credits: newCred });
+                // Sync walletBalance to users/{uid}
+                transaction.update(userRef, { walletBalance: newBal });
+                // Immutable financial audit trail
+                const ledgerRef = db.collection('ledger').doc();
+                transaction.set(ledgerRef, {
+                    type: 'purchase',
+                    studentRegNo: rollNo,
+                    studentUid: auth.uid,
+                    amount: serverTotalPrice,
+                    orderId,
+                    intentId, // Cross-resource correlation key
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    description: `Order ${orderId}`
+                });
+            }
+            // Update daily order counter
+            if (counterSnap.exists) {
+                transaction.update(dailyCounterRef, { count: orderNumber });
+            }
+            else {
+                transaction.set(dailyCounterRef, { count: orderNumber, date: today });
+            }
+            // CRITICAL ARCH-B ATOMICITY: Intent journal updated in SAME Firestore transaction
+            transaction.update(intentRef, {
+                state: 'FINANCIALLY_COMMITTED',
+                'journal.firestoreWalletDebited': true,
+                orderNumber,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+        });
+        // ── STEP 4: RTDB ORDER DISPATCH WITH LEASE FENCING COMMIT ──
+        const nowTimestamp = Date.now();
+        const messStatusSnap = await rtdb.ref('mess_status').once('value');
+        const currentlyServing = messStatusSnap.exists() ? messStatusSnap.val().currentlyServing || 0 : 0;
+        const queuePosition = Math.max(0, orderNumber - currentlyServing);
+        const waitTimeSeconds = queuePosition * 3; // 3 seconds per order
+        const startTimeDate = new Date(nowTimestamp + waitTimeSeconds * 1000);
+        const endTimeDate = new Date(startTimeDate.getTime() + 180 * 1000);
+        const formatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        estimatedServingWindow = `${formatter.format(startTimeDate)} - ${formatter.format(endTimeDate)}`;
+        newOrder = {
+            id: orderId,
+            intentId, // Cross-resource correlation key
+            orderNumber,
+            userId: auth.uid,
+            userRollNo: rollNo,
             items: enrichedCart,
-            totalPrice,
+            totalPrice: serverTotalPrice,
             slotName,
             payment_mode: paymentMode,
             status: 'ordered',
@@ -269,25 +619,85 @@ exports.securePlaceOrder = https.onCall(async (request) => {
             createdAt: new Date().toISOString(),
             timestamp: admin.database.ServerValue.TIMESTAMP
         };
+        // Commit the RTDB leases with FENCING VALIDATION
+        const commitRes = await commitRtdbLeases(rtdb, cart, intentId, fenceToken);
+        if (!commitRes.success) {
+            functions.logger.error('ARCH-B: Fencing validation failed on commit — lease was reclaimed', {
+                intentId,
+                orderId,
+                commitRes
+            });
+            await refundStudentWallet(db, initialIntent, 'Checkout delay exceeded lease TTL; stock reservation was reclaimed.');
+            throw new https.HttpsError('deadline-exceeded', 'Checkout took too long and the item reservation expired. Your wallet has been automatically refunded.');
+        }
+        // Fencing confirmed! Lease safely transitioned to COMMITTED. Dispatch kitchen ticket:
         await rtdb.ref(`active_orders/${orderId}`).set(newOrder);
-        return { success: true, orderId, orderNumber: result.orderNumber, estimatedServingWindow };
+        // Finalize Transaction Intent as COMMITTED
+        await intentRef.update({
+            state: 'COMMITTED',
+            'journal.rtdbOrderDispatched': true,
+            'journal.rtdbLeaseReleased': true,
+            estimatedServingWindow,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        return { success: true, orderId, orderNumber, estimatedServingWindow };
     }
     catch (error) {
-        functions.logger.error('securePlaceOrder failed', JSON.stringify({
-            message: error === null || error === void 0 ? void 0 : error.message,
-            code: error === null || error === void 0 ? void 0 : error.code,
-            details: error === null || error === void 0 ? void 0 : error.details,
-            httpErrorCode: error === null || error === void 0 ? void 0 : error.httpErrorCode,
-            stack: (_a = error === null || error === void 0 ? void 0 : error.stack) === null || _a === void 0 ? void 0 : _a.substring(0, 500),
-        }));
-        // HttpsError thrown inside db.runTransaction gets wrapped by Firestore.
-        // Check for it directly first, then look for wrapped message patterns.
+        functions.logger.error('securePlaceOrder error occurred', {
+            intentId,
+            orderId,
+            errorMessage: error === null || error === void 0 ? void 0 : error.message,
+            errorCode: error === null || error === void 0 ? void 0 : error.code
+        });
+        // ── FAILURE RECOVERY & COMPENSATION ──
+        try {
+            const currentIntentSnap = await intentRef.get();
+            if (currentIntentSnap.exists) {
+                const currentIntent = currentIntentSnap.data();
+                if ((_d = currentIntent.journal) === null || _d === void 0 ? void 0 : _d.firestoreWalletDebited) {
+                    // Money was debited! Attempt immediate Forward Recovery with fencing check
+                    functions.logger.info('ARCH-B: Attempting immediate forward recovery in catch handler', { intentId, orderId });
+                    if (newOrder) {
+                        const commitRes = await commitRtdbLeases(rtdb, cart, intentId, (_e = currentIntent.journal) === null || _e === void 0 ? void 0 : _e.fenceToken);
+                        if (commitRes.success) {
+                            await rtdb.ref(`active_orders/${orderId}`).set(newOrder);
+                            await intentRef.update({
+                                state: 'COMMITTED',
+                                'journal.rtdbOrderDispatched': true,
+                                'journal.rtdbLeaseReleased': true,
+                                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                            });
+                            return { success: true, orderId, orderNumber, estimatedServingWindow, recovered: true };
+                        }
+                        else {
+                            functions.logger.error('ARCH-B: Catch forward recovery fencing failed — falling back to refund', { intentId, commitRes });
+                            await refundStudentWallet(db, currentIntent, 'Fencing failure during catch handler forward recovery; student refunded.');
+                        }
+                    }
+                    else {
+                        await refundStudentWallet(db, currentIntent, 'Order dispatch error in catch handler; student refunded.');
+                    }
+                }
+                else {
+                    // Money was NOT debited: safe backward compensation — release any acquired leases
+                    functions.logger.info('ARCH-B: Compensating by releasing RTDB inventory leases', { intentId });
+                    await releaseRtdbLeases(rtdb, cart, intentId, (_f = currentIntent.journal) === null || _f === void 0 ? void 0 : _f.fenceToken);
+                    await intentRef.update({
+                        state: 'CANCELLED',
+                        'journal.rtdbLeaseReleased': true,
+                        errorMessage: (error === null || error === void 0 ? void 0 : error.message) || 'Transaction aborted before financial commit',
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                }
+            }
+        }
+        catch (compensationErr) {
+            functions.logger.error('ARCH-B: Secondary error during catch compensation handler', { intentId, compensationErr });
+        }
         if (error instanceof https.HttpsError) {
             throw error;
         }
-        // Firestore wraps thrown errors — try to extract meaningful message
         const msg = (error === null || error === void 0 ? void 0 : error.message) || 'Transaction failed';
-        // Map common Firestore/RTDB error messages back to useful codes
         if (msg.includes('Insufficient wallet balance')) {
             throw new https.HttpsError('resource-exhausted', msg);
         }
@@ -344,74 +754,7 @@ exports.securePlaceKioskOrder = https.onCall(async (request) => {
         const today = new Date().toISOString().split('T')[0];
         const dailyCounterRef = db.doc(`orderCounters/${today}`);
         let orderNumber = existingOrderNumber || 1;
-        // 3. Counter Order Specific Validation (Wallet deduction)
-        if (orderType === 'counter') {
-            if (!studentRegNo) {
-                throw new https.HttpsError('invalid-argument', 'Registration number required for counter orders.');
-            }
-            await db.runTransaction(async (transaction) => {
-                var _a;
-                const studentRef = db.collection('students').doc(studentRegNo);
-                const studentSnap = await transaction.get(studentRef);
-                if (!studentSnap.exists) {
-                    throw new https.HttpsError('not-found', 'Student record not found.');
-                }
-                const studentData = studentSnap.data();
-                if ((studentData === null || studentData === void 0 ? void 0 : studentData.status) === 'disabled') {
-                    throw new https.HttpsError('permission-denied', 'Account is disabled.');
-                }
-                if (paymentMode === 'credit') {
-                    const balance = (studentData === null || studentData === void 0 ? void 0 : studentData.balance) || 0;
-                    if (balance < serverTotalPrice) {
-                        throw new https.HttpsError('resource-exhausted', 'Insufficient wallet balance.');
-                    }
-                    const newBal = balance - serverTotalPrice;
-                    const newCred = ((studentData === null || studentData === void 0 ? void 0 : studentData.credits) || 0) - serverTotalPrice;
-                    transaction.update(studentRef, { balance: newBal, credits: newCred });
-                    if (studentData === null || studentData === void 0 ? void 0 : studentData.uid) {
-                        const userRef = db.collection('users').doc(studentData.uid);
-                        transaction.update(userRef, { walletBalance: newBal });
-                    }
-                    const ledgerRef = db.collection('ledger').doc();
-                    transaction.set(ledgerRef, {
-                        type: 'purchase',
-                        studentRegNo: studentRegNo,
-                        studentUid: (studentData === null || studentData === void 0 ? void 0 : studentData.uid) || 'UNKNOWN',
-                        amount: serverTotalPrice,
-                        orderId: orderId,
-                        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                        description: `Counter Order ${orderId}`
-                    });
-                }
-                if (!existingOrderNumber) {
-                    const counterSnap = await transaction.get(dailyCounterRef);
-                    if (counterSnap.exists) {
-                        orderNumber = (((_a = counterSnap.data()) === null || _a === void 0 ? void 0 : _a.count) || 0) + 1;
-                        transaction.update(dailyCounterRef, { count: orderNumber });
-                    }
-                    else {
-                        transaction.set(dailyCounterRef, { count: orderNumber, date: today });
-                    }
-                }
-            });
-        }
-        else {
-            // External/Shop: Just increment counter
-            if (!existingOrderNumber) {
-                await db.runTransaction(async (transaction) => {
-                    var _a;
-                    const counterSnap = await transaction.get(dailyCounterRef);
-                    if (counterSnap.exists) {
-                        orderNumber = (((_a = counterSnap.data()) === null || _a === void 0 ? void 0 : _a.count) || 0) + 1;
-                        transaction.update(dailyCounterRef, { count: orderNumber });
-                    }
-                    else {
-                        transaction.set(dailyCounterRef, { count: orderNumber, date: today });
-                    }
-                });
-            }
-        }
-        // 4. Atomically decrement RTDB stock
+        // 3. Atomically decrement RTDB stock FIRST (Fixing FM-02 Inversion Bug)
         const stockReverts = [];
         for (const item of cart) {
             const stockRef = rtdb.ref(`menu_stock/${item.id}`);
@@ -440,6 +783,88 @@ exports.securePlaceKioskOrder = https.onCall(async (request) => {
                 throw new https.HttpsError('resource-exhausted', `Out of stock: ${item.name}`);
             }
             stockReverts.push({ ref: stockRef, qty: item.qty });
+        }
+        // 4. Counter Order Specific Validation (Wallet deduction) SECOND
+        try {
+            if (orderType === 'counter') {
+                if (!studentRegNo) {
+                    throw new https.HttpsError('invalid-argument', 'Registration number required for counter orders.');
+                }
+                await db.runTransaction(async (transaction) => {
+                    var _a;
+                    const studentRef = db.collection('students').doc(studentRegNo);
+                    const studentSnap = await transaction.get(studentRef);
+                    if (!studentSnap.exists) {
+                        throw new https.HttpsError('not-found', 'Student record not found.');
+                    }
+                    const studentData = studentSnap.data();
+                    if ((studentData === null || studentData === void 0 ? void 0 : studentData.status) === 'disabled') {
+                        throw new https.HttpsError('permission-denied', 'Account is disabled.');
+                    }
+                    if (paymentMode === 'credit') {
+                        const balance = (studentData === null || studentData === void 0 ? void 0 : studentData.balance) || 0;
+                        if (balance < serverTotalPrice) {
+                            throw new https.HttpsError('resource-exhausted', 'Insufficient wallet balance.');
+                        }
+                        const newBal = balance - serverTotalPrice;
+                        const newCred = ((studentData === null || studentData === void 0 ? void 0 : studentData.credits) || 0) - serverTotalPrice;
+                        transaction.update(studentRef, { balance: newBal, credits: newCred });
+                        if (studentData === null || studentData === void 0 ? void 0 : studentData.uid) {
+                            const userRef = db.collection('users').doc(studentData.uid);
+                            transaction.update(userRef, { walletBalance: newBal });
+                        }
+                        const ledgerRef = db.collection('ledger').doc();
+                        transaction.set(ledgerRef, {
+                            type: 'purchase',
+                            studentRegNo: studentRegNo,
+                            studentUid: (studentData === null || studentData === void 0 ? void 0 : studentData.uid) || 'UNKNOWN',
+                            amount: serverTotalPrice,
+                            orderId: orderId,
+                            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                            description: `Counter Order ${orderId}`
+                        });
+                    }
+                    if (!existingOrderNumber) {
+                        const counterSnap = await transaction.get(dailyCounterRef);
+                        if (counterSnap.exists) {
+                            orderNumber = (((_a = counterSnap.data()) === null || _a === void 0 ? void 0 : _a.count) || 0) + 1;
+                            transaction.update(dailyCounterRef, { count: orderNumber });
+                        }
+                        else {
+                            transaction.set(dailyCounterRef, { count: orderNumber, date: today });
+                        }
+                    }
+                });
+            }
+            else {
+                // External/Shop: Just increment counter
+                if (!existingOrderNumber) {
+                    await db.runTransaction(async (transaction) => {
+                        var _a;
+                        const counterSnap = await transaction.get(dailyCounterRef);
+                        if (counterSnap.exists) {
+                            orderNumber = (((_a = counterSnap.data()) === null || _a === void 0 ? void 0 : _a.count) || 0) + 1;
+                            transaction.update(dailyCounterRef, { count: orderNumber });
+                        }
+                        else {
+                            transaction.set(dailyCounterRef, { count: orderNumber, date: today });
+                        }
+                    });
+                }
+            }
+        }
+        catch (walletErr) {
+            // Revert stock if wallet deduction fails!
+            for (const revert of stockReverts) {
+                await revert.ref.transaction((d) => {
+                    if (d !== null) {
+                        d.stock = (d.stock || 0) + revert.qty;
+                        d.available = true;
+                    }
+                    return d;
+                }).catch(() => { });
+            }
+            throw walletErr;
         }
         // 5. Create order in RTDB
         const enrichedCart = cart.map((item) => {
@@ -759,5 +1184,41 @@ exports.cancelStalePendingOrders = (0, scheduler_1.onSchedule)({ schedule: 'ever
         }
     }
     functions.logger.info(`cancelStalePendingOrders: cancelled ${staleOrders.length} orders.`);
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// reconcileIncompleteIntents — ARCH-B Background Sweeper & Reconciler
+// Runs every 1 minute: sweeps unfinalized transaction intents past lease expiry
+// Evaluates journal flags and executes forward recovery or backward refund
+// ─────────────────────────────────────────────────────────────────────────────
+exports.reconcileIncompleteIntents = (0, scheduler_1.onSchedule)({ schedule: 'every 1 minutes', timeZone: 'Asia/Kolkata' }, async () => {
+    const db = admin.firestore();
+    const rtdb = admin.database();
+    const nowMs = Date.now();
+    try {
+        const snap = await db.collection('transaction_intents')
+            .where('state', 'in', ['INITIALIZED', 'RESERVED', 'FINANCIALLY_COMMITTED'])
+            .where('leaseExpiresAt', '<=', nowMs)
+            .limit(50)
+            .get();
+        if (snap.empty) {
+            return;
+        }
+        functions.logger.info(`reconcileIncompleteIntents: sweeping ${snap.docs.length} incomplete intents.`);
+        for (const docSnap of snap.docs) {
+            const intent = docSnap.data();
+            try {
+                await reconcileIntent(db, rtdb, docSnap.id, intent);
+            }
+            catch (itemErr) {
+                functions.logger.error('reconcileIncompleteIntents: error reconciling intent', {
+                    intentId: docSnap.id,
+                    itemErr
+                });
+            }
+        }
+    }
+    catch (err) {
+        functions.logger.error('reconcileIncompleteIntents job failed', { err });
+    }
 });
 //# sourceMappingURL=index.js.map

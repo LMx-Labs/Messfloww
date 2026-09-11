@@ -19,9 +19,10 @@ export const orderService = {
     userRollNo: string,
     items: OrderItem[],
     totalPrice: number,
-    slotInfo: MealSlot
+    slotInfo: MealSlot,
+    idempotencyKey?: string
   ): Promise<{ id: string, orderNumber: number, estimatedServingWindow: string }> {
-    return sharedOrderService.placeOrderWithAtomicStock(userId, userRollNo, items, totalPrice, slotInfo);
+    return sharedOrderService.placeOrderWithAtomicStock(userId, userRollNo, items, totalPrice, slotInfo, idempotencyKey);
   },
 
   /**

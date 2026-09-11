@@ -11,6 +11,9 @@
       "$itemId": {
         "stock": {
           ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "reserved": {
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0)"
         }
       }
     },
@@ -28,7 +31,7 @@
     "system_status": {
       ".read": "auth != null",
       "admin_online": {
-        ".write": "auth != null"
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('userType').val() == 'admin' || root.child('users').child(auth.uid).child('role').val() == 'admin' || auth.token.email == 'lakshya.pms@gmail.com' || auth.token.email == 'samnagar@gmail.com')"
       }
     },
     "mess_status": {

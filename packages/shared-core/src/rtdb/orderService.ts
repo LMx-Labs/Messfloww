@@ -201,7 +201,8 @@ export const orderService = {
     _userRollNo: string,
     items: OrderItem[],
     totalPrice: number,
-    slotInfo: MealSlot
+    slotInfo: MealSlot,
+    idempotencyKey?: string
   ): Promise<{ id: string, orderNumber: number, estimatedServingWindow: string }> {
     try {
       const functions = getFunctions(app);
@@ -211,7 +212,8 @@ export const orderService = {
         cart: items,
         totalPrice,
         slotName: slotInfo.name,
-        paymentMode: "credit"
+        paymentMode: "credit",
+        idempotencyKey
       });
 
       const data = result.data as any;

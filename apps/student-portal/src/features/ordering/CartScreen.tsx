@@ -29,6 +29,8 @@ export function CartScreen() {
   type PaymentMethod = 'credits' | 'upi';
   const isEnrolled = userProfile?.isEnrolled ?? false;
   const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>('upi');
+  // Client-anchored idempotency key (survives network timeouts and re-clicks)
+  const [idempotencyKey] = useState<string>(() => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `idemp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`));
 
   // Synchronize cart with offline storage so changes (like deletions) persist
   useEffect(() => {
@@ -190,7 +192,8 @@ export function CartScreen() {
           userProfile.rollNo,
           cart,
           totalPrice,
-          currentSlot
+          currentSlot,
+          idempotencyKey
         );
         
         // Eagerly update local wallet balance in memory Context so UI reflects

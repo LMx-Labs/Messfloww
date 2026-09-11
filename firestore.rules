@@ -94,6 +94,12 @@ service cloud.firestore {
       allow delete: if isStaff();
     }
 
+    // ARCH-B: Transaction Intents — users read own intents; writes restricted to Staff/Admin SDK
+    match /transaction_intents/{intentId} {
+      allow read: if isAuth() && (isStaff() || request.auth.uid == resource.data.userId);
+      allow write: if isStaff();
+    }
+
     // Catch-all deny
     match /{document=**} {
       allow read, write: if false;
