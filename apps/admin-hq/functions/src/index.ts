@@ -248,57 +248,139 @@ export async function releaseRtdbLeases(
 }
 
 /**
+ * Result enum for idempotent refundStudentWallet.
+ * REFUNDED         — Refund applied successfully this invocation.
+ * ALREADY_REFUNDED — Intent was already CANCELLED; no wallet credit applied.
+ * NOT_ELIGIBLE     — Intent lacks a financial debit; refund is not applicable.
+ * FAILED           — Unexpected error inside the Firestore transaction.
+ */
+export type RefundResult = 'REFUNDED' | 'ALREADY_REFUNDED' | 'NOT_ELIGIBLE' | 'FAILED';
+
+/**
  * refundStudentWallet:
- * Immutable refund helper for financial consistency restoration.
- * Credits student balance/credits, syncs users/{uid}, logs ledger audit trail, and cancels intent.
+ * Idempotent refund helper for financial consistency restoration.
+ *
+ * IDEMPOTENCY GUARANTEE:
+ * All five operations (intent state read, wallet credit on students/{regNo},
+ * wallet sync on users/{uid}, deterministic ledger entry, and intent cancellation)
+ * execute inside a single Firestore transaction.
+ *
+ * The ledger document ID is deterministic: `refund_${intentId}`. Firestore
+ * document creation with a fixed ID is idempotent — a second concurrent
+ * execution will conflict on the ledger create(), the transaction will abort,
+ * and Firestore will retry. On retry it finds the intent already CANCELLED and
+ * returns ALREADY_REFUNDED without crediting the wallet again.
+ *
+ * Concurrent or repeated calls for the same intentId are therefore safe:
+ * exactly one will win the Firestore transaction; all others will return
+ * ALREADY_REFUNDED.
  */
 export async function refundStudentWallet(
   db: admin.firestore.Firestore,
   intent: { intentId: string; orderId: string; userRollNo: string; userId: string; totalPrice: number },
   reason: string
-): Promise<void> {
-  await db.runTransaction(async (tx) => {
-    const studentRef = db.collection('students').doc(intent.userRollNo);
-    const studentSnap = await tx.get(studentRef);
-    if (studentSnap.exists) {
-      const bal = studentSnap.data()?.balance || 0;
-      const cred = studentSnap.data()?.credits || 0;
-      tx.update(studentRef, { balance: bal + intent.totalPrice, credits: cred + intent.totalPrice });
-    }
-    const userRef = db.collection('users').doc(intent.userId);
-    const userSnap = await tx.get(userRef);
-    if (userSnap.exists) {
-      const uBal = userSnap.data()?.walletBalance || 0;
-      tx.update(userRef, { walletBalance: uBal + intent.totalPrice });
-    }
-    const ledgerRef = db.collection('ledger').doc();
-    tx.set(ledgerRef, {
-      type: 'refund',
-      studentRegNo: intent.userRollNo,
-      studentUid: intent.userId,
-      amount: intent.totalPrice,
-      orderId: intent.orderId,
-      intentId: intent.intentId,
-      reason,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      description: `Auto-refund for order ${intent.orderId}: ${reason}`
+): Promise<RefundResult> {
+  // Deterministic ledger document ID prevents duplicate ledger entries even if
+  // this function is invoked twice before either transaction commits.
+  const deterministicLedgerId = `refund_${intent.intentId}`;
+
+  try {
+    await db.runTransaction(async (tx) => {
+      // ── GATE: Read the live intent state inside the transaction ──
+      const intentRef = db.collection('transaction_intents').doc(intent.intentId);
+      const intentSnap = await tx.get(intentRef);
+
+      if (!intentSnap.exists) {
+        // Intent document missing — nothing to refund.
+        throw Object.assign(new Error('INTENT_NOT_FOUND'), { code: 'NOT_ELIGIBLE' });
+      }
+
+      const liveState = intentSnap.data()?.state as TransactionIntentState;
+
+      // If the intent is already CANCELLED, a refund was already committed.
+      if (liveState === 'CANCELLED') {
+        throw Object.assign(new Error('ALREADY_REFUNDED'), { code: 'ALREADY_REFUNDED' });
+      }
+
+      // Only refund if money was actually debited.
+      const walletDebited = intentSnap.data()?.journal?.firestoreWalletDebited === true;
+      if (!walletDebited) {
+        throw Object.assign(new Error('NOT_ELIGIBLE'), { code: 'NOT_ELIGIBLE' });
+      }
+
+      // ── CREDIT WALLET: students/{regNo} ──
+      const studentRef = db.collection('students').doc(intent.userRollNo);
+      const studentSnap = await tx.get(studentRef);
+      if (studentSnap.exists) {
+        const bal = studentSnap.data()?.balance || 0;
+        const cred = studentSnap.data()?.credits || 0;
+        tx.update(studentRef, { balance: bal + intent.totalPrice, credits: cred + intent.totalPrice });
+      }
+
+      // ── SYNC WALLET: users/{uid} ──
+      const userRef = db.collection('users').doc(intent.userId);
+      const userSnap = await tx.get(userRef);
+      if (userSnap.exists) {
+        const uBal = userSnap.data()?.walletBalance || 0;
+        tx.update(userRef, { walletBalance: uBal + intent.totalPrice });
+      }
+
+      // ── DETERMINISTIC LEDGER ENTRY ──
+      // Using a fixed doc ID means a second concurrent transaction will collide
+      // on the set() and abort, preventing a double ledger entry and double credit.
+      const ledgerRef = db.collection('ledger').doc(deterministicLedgerId);
+      tx.set(ledgerRef, {
+        type: 'refund',
+        studentRegNo: intent.userRollNo,
+        studentUid: intent.userId,
+        amount: intent.totalPrice,
+        orderId: intent.orderId,
+        intentId: intent.intentId,
+        reason,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        description: `Auto-refund for order ${intent.orderId}: ${reason}`
+      });
+
+      // ── CANCEL INTENT (atomic with wallet credit) ──
+      tx.update(intentRef, {
+        state: 'CANCELLED',
+        errorMessage: reason,
+        'journal.rtdbLeaseReleased': true,
+        reconciledAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
     });
-    tx.update(db.collection('transaction_intents').doc(intent.intentId), {
-      state: 'CANCELLED',
-      errorMessage: reason,
-      'journal.rtdbLeaseReleased': true,
-      reconciledAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-  });
+
+    functions.logger.info('refundStudentWallet: REFUNDED', { intentId: intent.intentId, amount: intent.totalPrice, reason });
+    return 'REFUNDED';
+
+  } catch (err: any) {
+    const code = err?.code as string | undefined;
+    if (code === 'ALREADY_REFUNDED') {
+      functions.logger.info('refundStudentWallet: ALREADY_REFUNDED — skipping duplicate credit', { intentId: intent.intentId });
+      return 'ALREADY_REFUNDED';
+    }
+    if (code === 'NOT_ELIGIBLE') {
+      functions.logger.warn('refundStudentWallet: NOT_ELIGIBLE — no financial debit found', { intentId: intent.intentId });
+      return 'NOT_ELIGIBLE';
+    }
+    functions.logger.error('refundStudentWallet: FAILED', { intentId: intent.intentId, err });
+    return 'FAILED';
+  }
 }
 
 /**
  * reconcileIntent:
  * Core deterministic recovery worker. Resolves incomplete transaction intents across Firestore and RTDB.
+ *
+ * IDEMPOTENCY: Reads the live intent state from Firestore before acting. If the
+ * intent is already COMMITTED or CANCELLED by a concurrent invocation, this
+ * function returns early with no side effects. This makes it safe for the
+ * background sweeper to run multiple overlapping instances.
+ *
  * Evaluates the journal bitmask:
  * - If firestoreWalletDebited == true: executes FORWARD RECOVERY (dispatches active_orders and commits leases).
- *   If forward recovery fails after retries, executes backward refund to ensure financial consistency.
+ *   If forward recovery fails, calls idempotent refundStudentWallet for backward compensation.
  * - If firestoreWalletDebited == false: executes BACKWARD COMPENSATION (releases RTDB leases, cancels intent).
  */
 export async function reconcileIntent(
@@ -309,32 +391,48 @@ export async function reconcileIntent(
 ): Promise<void> {
   const intentRef = db.collection('transaction_intents').doc(intentId);
 
-  if (intent.journal?.firestoreWalletDebited) {
-    functions.logger.info('Reconciler: forward recovery for financially committed intent', { intentId, orderId: intent.orderId });
+  // ── IDEMPOTENCY GATE: Re-read live state before acting ──────────────────────
+  // Prevents duplicate recovery in case two sweeper instances race on the same
+  // intent between the initial query and this execution.
+  const liveSnap = await intentRef.get();
+  if (!liveSnap.exists) {
+    functions.logger.warn('reconcileIntent: intent document not found, skipping.', { intentId });
+    return;
+  }
+  const liveState = liveSnap.data()?.state as TransactionIntentState;
+  if (liveState === 'COMMITTED' || liveState === 'CANCELLED' || liveState === 'FAILED') {
+    functions.logger.info('reconcileIntent: intent already in terminal state, skipping.', { intentId, liveState });
+    return;
+  }
+  // Use the live snapshot to ensure decisions are based on current data.
+  const liveIntent = liveSnap.data() as TransactionIntentDocument;
+
+  if (liveIntent.journal?.firestoreWalletDebited) {
+    functions.logger.info('Reconciler: forward recovery for financially committed intent', { intentId, orderId: liveIntent.orderId });
     try {
       // Verify or create RTDB active order
-      const orderRef = rtdb.ref(`active_orders/${intent.orderId}`);
+      const orderRef = rtdb.ref(`active_orders/${liveIntent.orderId}`);
       const orderSnap = await orderRef.once('value');
       if (!orderSnap.exists()) {
         await orderRef.set({
-          id: intent.orderId,
+          id: liveIntent.orderId,
           intentId,
-          orderNumber: intent.orderNumber || 0,
-          userId: intent.userId,
-          userRollNo: intent.userRollNo,
-          items: intent.cart,
-          totalPrice: intent.totalPrice,
-          slotName: intent.slotName,
-          payment_mode: intent.paymentMode,
+          orderNumber: liveIntent.orderNumber || 0,
+          userId: liveIntent.userId,
+          userRollNo: liveIntent.userRollNo,
+          items: liveIntent.cart,
+          totalPrice: liveIntent.totalPrice,
+          slotName: liveIntent.slotName,
+          payment_mode: liveIntent.paymentMode,
           status: 'ordered',
           sync_status: 'cloud',
-          estimatedServingWindow: intent.estimatedServingWindow || 'Soon',
+          estimatedServingWindow: liveIntent.estimatedServingWindow || 'Soon',
           createdAt: new Date().toISOString(),
           timestamp: admin.database.ServerValue.TIMESTAMP
         });
       }
 
-      const commitRes = await commitRtdbLeases(rtdb, intent.cart, intentId, intent.journal?.fenceToken);
+      const commitRes = await commitRtdbLeases(rtdb, liveIntent.cart, intentId, liveIntent.journal?.fenceToken);
       if (!commitRes.success) {
         throw new Error(`Reconciler lease fencing failure: ${commitRes.reason || 'lease was reclaimed'}`);
       }
@@ -346,16 +444,18 @@ export async function reconcileIntent(
         reconciledAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
+      functions.logger.info('reconcileIntent: forward recovery COMMITTED', { intentId });
       return;
     } catch (fwdErr) {
-      functions.logger.error('Reconciler forward recovery failed, falling back to refund', { intentId, fwdErr });
-      await refundStudentWallet(db, intent, 'Forward recovery dispatch or fencing failed; student wallet refunded.');
-      await releaseRtdbLeases(rtdb, intent.cart, intentId, intent.journal?.fenceToken);
+      functions.logger.error('Reconciler forward recovery failed, falling back to idempotent refund', { intentId, fwdErr });
+      const refundResult = await refundStudentWallet(db, liveIntent, 'Forward recovery dispatch or fencing failed; student wallet refunded.');
+      functions.logger.info('reconcileIntent: refund result', { intentId, refundResult });
+      await releaseRtdbLeases(rtdb, liveIntent.cart, intentId, liveIntent.journal?.fenceToken);
     }
   } else {
     // Money not debited — release leases and cancel intent
     functions.logger.info('Reconciler: releasing expired lease for un-debited intent', { intentId });
-    await releaseRtdbLeases(rtdb, intent.cart, intentId, intent.journal?.fenceToken);
+    await releaseRtdbLeases(rtdb, liveIntent.cart, intentId, liveIntent.journal?.fenceToken);
     await intentRef.update({
       state: 'CANCELLED',
       'journal.rtdbLeaseReleased': true,
@@ -363,6 +463,7 @@ export async function reconcileIntent(
       reconciledAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
+    functions.logger.info('reconcileIntent: backward compensation CANCELLED', { intentId });
   }
 }
 export const securePlaceOrder = https.onCall(async (request: https.CallableRequest) => {
