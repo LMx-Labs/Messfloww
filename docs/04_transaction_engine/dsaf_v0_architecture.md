@@ -65,12 +65,14 @@ A globally unique token linking the Firestore Intent to the RTDB Lease.
 Triggered if the **Commit** phase fails (e.g., RTDB network error, or Fencing Token mismatch indicating lease expiry).
 1. The coordinator catches the error.
 2. Evaluates the journal. If `firestoreWalletDebited == true`:
-   - An inverse transaction runs: Credits student wallet, writes `refund` ledger entry.
+   - An inverse transaction runs: Credits student wallet, writes `refund_{intentId}` ledger entry.
+   - **Idempotency Gate**: The refund transaction first reads the intent state. If it is already `CANCELLED`, it skips the credit and returns `ALREADY_REFUNDED`. It uses a deterministic ledger doc ID (`refund_{intentId}`) to block concurrent duplicate ledger writes.
 3. Releases RTDB lease.
 4. Marks intent as `CANCELLED`.
 
 ## 9. Recovery Flow (Cron Reconciler)
-A background cron job sweeps `transaction_intents` for stuck transactions (e.g., node crash midway).
+A background cron job (`reconcileIncompleteIntents`) sweeps `transaction_intents` for stuck transactions every minute.
+- **Idempotency Gate**: The reconciler first re-reads the live intent from Firestore. If the state is already terminal (`COMMITTED`, `CANCELLED`, `FAILED`), it aborts (no-op). This prevents duplicate recovery if multiple sweeper instances overlap.
 - **Forward Recovery**: If `firestoreWalletDebited == true`, it attempts to replay the RTDB commit. If fencing fails, it triggers the Compensation Flow.
 - **Backward Recovery**: If `firestoreWalletDebited == false`, it releases the RTDB lease and marks the intent `CANCELLED`.
 
